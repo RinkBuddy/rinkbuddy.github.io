@@ -7,25 +7,14 @@
     <title>My Bootstrap Site</title>
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        /* Custom styles */
-        .bg-image {
-            background-image: url('assets/icebackground.png'); /* Replace with your image path */
-            background-size: cover;
-            background-position: center;
-            height: 100vh;
-        }
-        .overlay {
-            background-color: rgba(0, 0, 0, 0.5); /* Adds a dark overlay */
-            height: 100%;
-        }
-    </style>
+    <!-- Link to external CSS file -->
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <!-- Navbar -->
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container-fluid">
-            <a class="navbar-brand" href="#">Rink Buddy</a>
+            <a class="navbar-brand" href="#">My Site</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
             </button>
@@ -46,33 +35,35 @@
     </nav>
 
     <!-- Hero Section -->
-    <div class="bg-image d-flex justify-content-center align-items-center">
-        <div class="overlay d-flex justify-content-center align-items-center">
-            <div class="text-center text-white">
-                <h1>Welcome to My Site</h1>
-                <p class="lead">This is a responsive site powered by Bootstrap.</p>
-                <a href="#features" class="btn btn-primary btn-lg">Learn More</a>
-                <a href="#features" class="btn btn-primary btn-lg">Learn More</a>
-                <a href="#features" class="btn btn-primary btn-lg">Learn More</a>
-                <a href="#features" class="btn btn-primary btn-lg">Learn More</a>
+    <div class="hero">
+        <div class="hero-overlay"></div>
+        <div>
+            <h1>Welcome to My Site</h1>
+            <p class="lead">This is a responsive site powered by Bootstrap.</p>
+            <a href="#features" class="btn btn-primary btn-lg">Learn More</a>
+            <div class="mt-3"> <!-- Add margin to separate buttons -->
+                <a href="#feature1" class="btn btn-secondary btn-lg m-2">Feature 1</a>
+                <a href="#feature2" class="btn btn-secondary btn-lg m-2">Feature 2</a>
+                <a href="#feature3" class="btn btn-secondary btn-lg m-2">Feature 3</a>
+                <a href="#feature4" class="btn btn-secondary btn-lg m-2">Feature 4</a>
             </div>
         </div>
     </div>
 
     <!-- Features Section -->
-    <section id="features" class="py-5">
+    <section id="features" class="section">
         <div class="container">
             <div class="row">
                 <div class="col-md-4 text-center">
-                    <h3>Feature 1</h3>
+                    <h3 id="feature1">Feature 1</h3>
                     <p>Responsive design that adapts to all devices.</p>
                 </div>
                 <div class="col-md-4 text-center">
-                    <h3>Feature 2</h3>
+                    <h3 id="feature2">Feature 2</h3>
                     <p>Easy-to-use components with Bootstrap.</p>
                 </div>
                 <div class="col-md-4 text-center">
-                    <h3>Feature 3</h3>
+                    <h3 id="feature3">Feature 3</h3>
                     <p>Clean and modern layout for your site.</p>
                 </div>
             </div>
@@ -80,11 +71,11 @@
     </section>
 
     <!-- Footer -->
-    <footer class="bg-dark text-white text-center py-3">
-        <p>&copy; 2024 Rink Buddy. All Rights Reserved.</p>
+    <footer>
+        <p>&copy; 2024 My Bootstrap Site. All Rights Reserved.</p>
     </footer>
 
-    <!-- Bootstrap Bundle with Popper -->
+    <!-- Bootstrap JS Bundle with Popper -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
