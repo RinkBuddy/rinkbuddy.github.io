@@ -1,91 +1,269 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="X-UA-Compatible" content="ie=edge">
-    <title>My Bootstrap Site</title>
-    <!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Link to external CSS file -->
-    <link rel="stylesheet" href="styles.css">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rink Buddy — Runs Logger</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; }
+  header { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid #ddd; }
+  #app { display:grid; grid-template-columns: 340px 1fr; min-height: calc(100vh - 57px); }
+  #left { border-right:1px solid #ddd; padding:12px; }
+  #right { padding:16px; }
+  button { padding:8px 12px; border-radius:10px; border:1px solid #999; background:#fff; cursor:pointer; }
+  button.primary { background:#0b57d0; color:#fff; border-color:#0b57d0; }
+  button:disabled { opacity:.6; cursor:not-allowed; }
+  .muted { opacity:.8; font-size:.9em; }
+  ul { list-style:none; padding:0; margin:8px 0 0 0; }
+  li.run { padding:8px 10px; border:1px solid #ddd; border-radius:10px; margin-bottom:8px; cursor:pointer; }
+  li.run:hover { background: rgba(0,0,0,0.04); }
+  .row { display:flex; gap:8px; align-items:center; }
+  .stack { display:flex; flex-direction:column; gap:8px; }
+  textarea { width:100%; min-height:120px; padding:10px; border-radius:10px; border:1px solid #ccc; resize:vertical; }
+  .card { border:1px solid #ddd; border-radius:12px; padding:12px; }
+  code, pre { background:#f6f6f6; padding:4px 6px; border-radius:6px; overflow:auto; }
+  @media (max-width: 900px) { #app { grid-template-columns: 1fr; } #left { border-right:none; border-bottom:1px solid #ddd; } }
+</style>
 </head>
 <body>
-    <!-- Navbar -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-        <div class="container-fluid">
-            <a class="navbar-brand" href="#">My Site</a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav">
-                    <li class="nav-item">
-                        <a class="nav-link active" href="#">Home</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="#">About</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="#">Contact</a>
-                    </li>
-                </ul>
-            </div>
-        </div>
-    </nav>
 
-    <!-- Hero Section -->
-    <div class="hero">
-        <div>
-            <h1>Welcome to My Site</h1>
-            <p class="lead">This is a responsive site powered by Bootstrap.</p>
-            <a href="#features" class="btn btn-primary btn-lg">Learn More</a>
-            <div class="mt-4">
-                <!-- Use a Bootstrap grid to stack buttons vertically -->
-                <div class="row">
-                    <div class="col-12 mb-3">
-                        <a href="#feature1" class="btn btn-secondary btn-lg w-100">New Depth Check</a>
-                    </div>
-                    <div class="col-12 mb-3">
-                        <a href="#feature2" class="btn btn-secondary btn-lg w-100">Edit Template</a>
-                    </div>
-                    <div class="col-12 mb-3">
-                        <a href="#feature3" class="btn btn-secondary btn-lg w-100">View History</a>
-                    </div>
-                    <div class="col-12 mb-3">
-                        <a href="#feature4" class="btn btn-secondary btn-lg w-100">Help</a>
-                    </div>
-                </div>
-            </div>
+<header>
+  <div class="row"><strong>Rink Buddy — Runs Logger</strong></div>
+  <div class="row" id="authRow">
+    <span id="userInfo" class="muted">Signed out</span>
+    <button id="btnSignIn" class="primary">Sign in with Google</button>
+    <button id="btnSignOut" style="display:none;">Sign out</button>
+  </div>
+</header>
+
+<div id="app">
+  <section id="left" class="stack">
+    <div class="card stack">
+      <div class="row" style="justify-content:space-between;">
+        <strong>Create Run</strong>
+        <button id="btnCreateRun" class="primary" disabled>Create run</button>
+      </div>
+      <div id="createPanel" style="display:none;" class="stack">
+        <label class="muted">Enter depth readings (comma/space/newline separated)</label>
+        <textarea id="txtReadings" placeholder="e.g. 12, 11.8, 12.3, 13, 11.9"></textarea>
+        <div class="row" style="justify-content:flex-end;">
+          <button id="btnSubmitRun" class="primary">Submit</button>
         </div>
+        <div id="createMsg" class="muted"></div>
+      </div>
     </div>
 
-    <!-- Features Section -->
-    <section id="features" class="section">
-        <div class="container">
-            <div class="row">
-                <div class="col-md-4 text-center">
-                    <h3 id="feature1">Feature 1</h3>
-                    <p>Responsive design that adapts to all devices.</p>
-                </div>
-                <div class="col-md-4 text-center">
-                    <h3 id="feature2">Feature 2</h3>
-                    <p>Easy-to-use components with Bootstrap.</p>
-                </div>
-                <div class="col-md-4 text-center">
-                    <h3 id="feature3">Feature 3</h3>
-                    <p>Clean and modern layout for your site.</p>
-                </div>
-            </div>
+    <div class="card">
+      <strong>Past Runs</strong>
+      <div class="muted">Newest first (your runs only)</div>
+      <ul id="runsList"></ul>
+      <div id="emptyMsg" class="muted" style="display:none;">No runs yet.</div>
+    </div>
+  </section>
+
+  <section id="right" class="stack">
+    <div class="card">
+      <strong>Run Details</strong>
+      <div id="detailsBody" class="muted">Select a run from the left.</div>
+    </div>
+  </section>
+</div>
+
+<!-- Firebase (CDN, modular v9+) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
+  import {
+    getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
+  } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
+  import {
+    getFirestore, doc, collection, getDoc, setDoc, onSnapshot,
+    serverTimestamp, query, orderBy, limit
+  } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
+
+  // === YOUR WEB APP CONFIG (from Firebase console) ===
+  const firebaseConfig = {
+    apiKey: "AIzaSyC1YPYvyeUMpcr8qgUTifHJioCayhh7QCQ",
+    authDomain: "rink-buddy-6f6ed.firebaseapp.com",
+    projectId: "rink-buddy-6f6ed",
+    storageBucket: "rink-buddy-6f6ed.appspot.com",
+    messagingSenderId: "1096930052063",
+    appId: "1:1096930052063:web:6b97608f1cdd3f5111666a",
+    measurementId: "G-7HPRJ6T9LD"
+  };
+
+  // Init SDKs
+  const app  = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db   = getFirestore(app);
+  const provider = new GoogleAuthProvider();
+
+  // UI refs
+  const btnSignIn = document.getElementById('btnSignIn');
+  const btnSignOut = document.getElementById('btnSignOut');
+  const userInfo = document.getElementById('userInfo');
+  const btnCreateRun = document.getElementById('btnCreateRun');
+  const createPanel = document.getElementById('createPanel');
+  const txtReadings = document.getElementById('txtReadings');
+  const btnSubmitRun = document.getElementById('btnSubmitRun');
+  const createMsg = document.getElementById('createMsg');
+  const runsList = document.getElementById('runsList');
+  const emptyMsg = document.getElementById('emptyMsg');
+  const detailsBody = document.getElementById('detailsBody');
+
+  // Auth
+  btnSignIn.addEventListener('click', async () => {
+    try { await signInWithPopup(auth, provider); }
+    catch (e) { alert('Sign-in error: ' + (e.message || e)); }
+  });
+  btnSignOut.addEventListener('click', () => signOut(auth));
+
+  onAuthStateChanged(auth, (user) => {
+    if (user) {
+      userInfo.textContent = `Signed in as ${user.displayName || user.email}`;
+      btnSignIn.style.display = 'none';
+      btnSignOut.style.display = '';
+      btnCreateRun.disabled = false;
+      loadRunsLive();
+    } else {
+      userInfo.textContent = 'Signed out';
+      btnSignIn.style.display = '';
+      btnSignOut.style.display = 'none';
+      btnCreateRun.disabled = true;
+      runsList.innerHTML = '';
+      emptyMsg.style.display = '';
+      detailsBody.textContent = 'Sign in and select a run.';
+    }
+  });
+
+  // Create run panel
+  btnCreateRun.addEventListener('click', () => {
+    createPanel.style.display = (createPanel.style.display === 'none') ? '' : 'none';
+    createMsg.textContent = '';
+  });
+
+  // Submit run
+  btnSubmitRun.addEventListener('click', async () => {
+    const user = auth.currentUser;
+    if (!user) { alert('Please sign in first.'); return; }
+
+    const readings = txtReadings.value.trim()
+      .split(/[\s,]+/)
+      .map(v => Number(v))
+      .filter(v => Number.isFinite(v));
+
+    if (readings.length === 0) {
+      createMsg.textContent = 'Please enter at least one number.';
+      return;
+    }
+    if (readings.length > 64) {
+      createMsg.textContent = 'Please limit to 64 readings or fewer.';
+      return;
+    }
+
+    // Simple summary example
+    const avg = readings.reduce((a,b)=>a+b,0) / readings.length;
+    const variance = readings.reduce((a,b)=>a + (b-avg)*(b-avg), 0) / readings.length;
+
+    // Use a shared runId for meta + data
+    const runId = crypto.randomUUID?.() || (Date.now().toString(36)+Math.random().toString(36).slice(2,8));
+    const uid = user.uid;
+
+    const metaRef = doc(db, `users/${uid}/runsMeta/${runId}`);
+    const dataRef = doc(db, `users/${uid}/runsData/${runId}`);
+
+    btnSubmitRun.disabled = true;
+    createMsg.textContent = 'Saving…';
+
+    try {
+      await setDoc(metaRef, {
+        startedAt: Date.now(),          // or serverTimestamp()
+        durationSec: readings.length,   // placeholder; adjust to your real duration
+        deviceId: 'web',                // set real device id if you have one
+        variance: Number(variance.toFixed(6))
+      });
+
+      await setDoc(dataRef, {
+        readings,
+        notes: ''
+      });
+
+      createMsg.textContent = 'Saved ✅';
+      txtReadings.value = '';
+    } catch (e) {
+      createMsg.textContent = 'Error: ' + (e.message || e);
+      console.error(e);
+    } finally {
+      btnSubmitRun.disabled = false;
+    }
+  });
+
+  // Live runs list
+  let unsubscribeRuns = null;
+  function loadRunsLive() {
+    if (unsubscribeRuns) unsubscribeRuns();
+    const user = auth.currentUser;
+    if (!user) return;
+
+    const q = query(
+      collection(db, `users/${user.uid}/runsMeta`),
+      orderBy('startedAt', 'desc'),
+      limit(50)
+    );
+
+    unsubscribeRuns = onSnapshot(q, (snap) => {
+      runsList.innerHTML = '';
+      if (snap.empty) { emptyMsg.style.display = ''; return; }
+      emptyMsg.style.display = 'none';
+      snap.forEach(docSnap => {
+        const d = docSnap.data();
+        const li = document.createElement('li');
+        li.className = 'run';
+        const date = new Date(d.startedAt || 0);
+        li.innerHTML = `
+          <div><strong>${date.toLocaleString()}</strong></div>
+          <div class="muted">device: ${d.deviceId || '—'} · duration: ${d.durationSec ?? '—'}s · var: ${d.variance ?? '—'}</div>
+        `;
+        li.addEventListener('click', () => openRun(docSnap.id));
+        runsList.appendChild(li);
+      });
+    }, (err) => {
+      runsList.innerHTML = `<li class="muted">Error loading runs: ${err.message || err}</li>`;
+    });
+  }
+
+  // Run details
+  async function openRun(runId) {
+    const user = auth.currentUser;
+    if (!user) return;
+    detailsBody.textContent = 'Loading…';
+    try {
+      const dataRef = doc(db, `users/${user.uid}/runsData/${runId}`);
+      const metaRef = doc(db, `users/${user.uid}/runsMeta/${runId}`);
+      const [dataSnap, metaSnap] = await Promise.all([getDoc(dataRef), getDoc(metaRef)]);
+      if (!dataSnap.exists() || !metaSnap.exists()) {
+        detailsBody.textContent = 'Run not found.';
+        return;
+      }
+      const data = dataSnap.data();
+      const meta = metaSnap.data();
+      const date = new Date(meta.startedAt || 0);
+
+      detailsBody.innerHTML = `
+        <div class="stack">
+          <div class="muted">Run ID: <code>${runId}</code></div>
+          <div><strong>${date.toLocaleString()}</strong></div>
+          <div class="muted">device: ${meta.deviceId || '—'} · duration: ${meta.durationSec ?? '—'}s · var: ${meta.variance ?? '—'}</div>
+          <div class="stack">
+            <strong>Readings (${(data.readings || []).length}):</strong>
+            <pre>${(data.readings || []).join(', ')}</pre>
+          </div>
         </div>
-    </section>
-
-    <!-- Footer -->
-    <footer>
-        <p>&copy; 2024 My Bootstrap Site. All Rights Reserved.</p>
-    </footer>
-
-    <!-- Bootstrap JS Bundle with Popper -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+      `;
+    } catch (e) {
+      detailsBody.textContent = 'Error: ' + (e.message || e);
+    }
+  }
+</script>
 </body>
 </html>
