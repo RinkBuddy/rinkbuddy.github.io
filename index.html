@@ -3,280 +3,127 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Rink Buddy — Runs Logger</title>
+<title>Rink Buddy — Auth First</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; }
-  header { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid #ddd; }
-  #app { display:grid; grid-template-columns: 340px 1fr; min-height: calc(100vh - 57px); }
-  #left { border-right:1px solid #ddd; padding:12px; }
-  #right { padding:16px; }
-  button { padding:8px 12px; border-radius:10px; border:1px solid #999; background:#fff; cursor:pointer; }
-  button.primary { background:#0b57d0; color:#fff; border-color:#0b57d0; }
-  button:disabled { opacity:.6; cursor:not-allowed; }
-  .muted { opacity:.8; font-size:.9em; }
-  ul { list-style:none; padding:0; margin:8px 0 0 0; }
-  li.run { padding:8px 10px; border:1px solid #ddd; border-radius:10px; margin-bottom:8px; cursor:pointer; }
-  li.run:hover { background: rgba(0,0,0,0.04); }
-  .row { display:flex; gap:8px; align-items:center; }
-  .stack { display:flex; flex-direction:column; gap:8px; }
-  textarea { width:100%; min-height:120px; padding:10px; border-radius:10px; border:1px solid #ccc; resize:vertical; }
-  .card { border:1px solid #ddd; border-radius:12px; padding:12px; }
-  code, pre { background:#f6f6f6; padding:4px 6px; border-radius:6px; overflow:auto; }
-  #log { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; white-space:pre-wrap; }
-  @media (max-width: 900px) { #app { grid-template-columns: 1fr; } #left { border-right:none; border-bottom:1px solid #ddd; } }
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:20px}
+  button{padding:8px 12px;border-radius:10px;border:1px solid #999;background:#fff;cursor:pointer}
+  .muted{opacity:.8}
+  pre{background:#f6f6f6;padding:10px;border-radius:8px;white-space:pre-wrap}
 </style>
 </head>
 <body>
+<h1>Rink Buddy — Auth First</h1>
+<p class="muted">This page signs in first, then lazy-loads Firestore. It also prints the <code>app.options</code> so we can verify the running config.</p>
 
-<header>
-  <div class="row"><strong>Rink Buddy — Runs Logger</strong></div>
-  <div class="row" id="authRow">
-    <span id="userInfo" class="muted">Signed out</span>
-    <button id="btnSignIn" class="primary">Sign in with Google</button>
-    <button id="btnSignOut" style="display:none;">Sign out</button>
-  </div>
-</header>
+<button id="login">Google Sign-In</button>
+<button id="logout" style="display:none">Sign out</button>
 
-<div id="app">
-  <section id="left" class="stack">
-    <div class="card stack">
-      <div class="row" style="justify-content:space-between;">
-        <strong>Create Run</strong>
-        <button id="btnCreateRun" class="primary" disabled>Create run</button>
-      </div>
-      <div id="createPanel" style="display:none;" class="stack">
-        <label class="muted">Enter depth readings (comma/space/newline separated)</label>
-        <textarea id="txtReadings" placeholder="e.g. 12, 11.8, 12.3, 13, 11.9"></textarea>
-        <div class="row" style="justify-content:flex-end;">
-          <button id="btnSubmitRun" class="primary">Submit</button>
-        </div>
-        <div id="createMsg" class="muted"></div>
-      </div>
-    </div>
+<h3>Runtime config</h3>
+<pre id="cfg"></pre>
 
-    <div class="card">
-      <strong>Past Runs</strong>
-      <div class="muted">Newest first (your runs only)</div>
-      <ul id="runsList"></ul>
-      <div id="emptyMsg" class="muted" style="display:none;">No runs yet.</div>
-    </div>
+<h3>Log</h3>
+<pre id="log"></pre>
 
-    <div class="card">
-      <strong>Debug log</strong>
-      <div id="log" class="muted"></div>
-    </div>
-  </section>
-
-  <section id="right" class="stack">
-    <div class="card">
-      <strong>Run Details</strong>
-      <div id="detailsBody" class="muted">Select a run from the left.</div>
-    </div>
-  </section>
+<h3>Demo UI (appears after sign-in)</h3>
+<div id="app" style="display:none">
+  <textarea id="txt" placeholder="12, 11.8, 13 ..." style="width:100%;min-height:90px"></textarea><br>
+  <button id="save">Save run</button>
+  <div id="status" class="muted"></div>
+  <h4>Past runs</h4>
+  <ul id="list"></ul>
 </div>
 
-<!-- Firebase (CDN, modular v9+) -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
-  import {
-    getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
-  } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
-  import {
-    getFirestore, doc, collection, getDoc, setDoc, onSnapshot,
-    query, orderBy, limit
-  } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
-
-  // === YOUR WEB APP CONFIG (from the Web App card) ===
+  import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
+  // IMPORTANT: paste the EXACT config that worked in your tiny test page:
   const firebaseConfig = {
     apiKey: "AIzaSyC1YPYvyeUMpcr8qgUTifHJioCayhh7QCQ",
     authDomain: "rink-buddy-6f6ed.firebaseapp.com",
     projectId: "rink-buddy-6f6ed",
-    storageBucket: "rink-buddy-6f6ed.appspot.com",
+    storageBucket: "rink-buddy-6f6ed.firebasestorage.app",
     messagingSenderId: "1096930052063",
     appId: "1:1096930052063:web:6b97608f1cdd3f5111666a",
     measurementId: "G-7HPRJ6T9LD"
   };
 
-  // ---------- helpers ----------
-  const $ = sel => document.querySelector(sel);
-  const log = (...a)=> { const L=$('#log'); L.textContent += a.join(' ') + '\n'; };
+  const app  = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const provider = new GoogleAuthProvider();
 
-  // ---------- init ----------
-  let app, auth, db, provider;
-  try {
-    app  = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db   = getFirestore(app);
-    provider = new GoogleAuthProvider();
-    log('Init OK. Origin:', location.origin);
-  } catch (e) {
-    log('Init FAILED:', e.message || e); throw e;
-  }
+  const $ = s => document.querySelector(s);
+  const log = (...a)=> { $('#log').textContent += a.join(' ') + "\n"; };
 
-  // ---------- UI refs ----------
-  const btnSignIn = $('#btnSignIn');
-  const btnSignOut = $('#btnSignOut');
-  const userInfo = $('#userInfo');
-  const btnCreateRun = $('#btnCreateRun');
-  const createPanel = $('#createPanel');
-  const txtReadings = $('#txtReadings');
-  const btnSubmitRun = $('#btnSubmitRun');
-  const createMsg = $('#createMsg');
-  const runsList = $('#runsList');
-  const emptyMsg = $('#emptyMsg');
-  const detailsBody = $('#detailsBody');
+  // Print the ACTUAL runtime options so we can compare keys visually
+  $('#cfg').textContent = JSON.stringify(app.options, null, 2);
+  log("Origin:", location.origin);
 
-  // ---------- auth ----------
-  btnSignIn.addEventListener('click', async () => {
-    try { await signInWithPopup(auth, provider); }
-    catch (e) { alert('Sign-in error: ' + (e.code || e.message)); log('Sign-in ERR:', e.code, e.message); }
-  });
-  btnSignOut.addEventListener('click', () => signOut(auth));
-
-  onAuthStateChanged(auth, (user) => {
-    if (user) {
-      userInfo.textContent = `Signed in as ${user.displayName || user.email}`;
-      btnSignIn.style.display = 'none';
-      btnSignOut.style.display = '';
-      btnCreateRun.disabled = false;
-      loadRunsLive();
-    } else {
-      userInfo.textContent = 'Signed out';
-      btnSignIn.style.display = '';
-      btnSignOut.style.display = 'none';
-      btnCreateRun.disabled = true;
-      runsList.innerHTML = '';
-      emptyMsg.style.display = '';
-      detailsBody.textContent = 'Sign in and select a run.';
-    }
-  });
-
-  // ---------- create run ----------
-  btnCreateRun.addEventListener('click', () => {
-    createPanel.style.display = (createPanel.style.display === 'none') ? '' : 'none';
-    createMsg.textContent = '';
-  });
-
-  btnSubmitRun.addEventListener('click', async () => {
-    const user = auth.currentUser;
-    if (!user) { alert('Please sign in first.'); return; }
-
-    const readings = txtReadings.value.trim()
-      .split(/[\s,]+/)
-      .map(v => Number(v))
-      .filter(v => Number.isFinite(v));
-
-    if (readings.length === 0) {
-      createMsg.textContent = 'Please enter at least one number.';
-      return;
-    }
-    if (readings.length > 64) {
-      createMsg.textContent = 'Please limit to 64 readings or fewer.';
-      return;
-    }
-
-    // sample summary
-    const avg = readings.reduce((a,b)=>a+b,0) / readings.length;
-    const variance = readings.reduce((a,b)=>a + (b-avg)*(b-avg), 0) / readings.length;
-
-    const runId = crypto.randomUUID?.() || (Date.now().toString(36)+Math.random().toString(36).slice(2,8));
-    const uid = user.uid;
-
-    const metaRef = doc(db, `users/${uid}/runsMeta/${runId}`);
-    const dataRef = doc(db, `users/${uid}/runsData/${runId}`);
-
-    btnSubmitRun.disabled = true;
-    createMsg.textContent = 'Saving…';
-
+  $('#login').onclick = async () => {
     try {
-      await setDoc(metaRef, {
-        startedAt: Date.now(),
-        durationSec: readings.length, // placeholder
-        deviceId: 'web',
-        variance: Number(variance.toFixed(6))
-      });
-      await setDoc(dataRef, { readings, notes: '' });
-
-      createMsg.textContent = 'Saved ✅';
-      txtReadings.value = '';
-      log('Write OK runId:', runId);
+      const res = await signInWithPopup(auth, provider);
+      log("Sign-in OK:", res.user.uid);
     } catch (e) {
-      createMsg.textContent = 'Error: ' + (e.code || e.message);
-      log('Write ERR:', e.code, e.message);
-    } finally {
-      btnSubmitRun.disabled = false;
+      log("Sign-in ERR:", e.code || e.message);
+      alert(e.message || e);
     }
-  });
+  };
+  $('#logout').onclick = () => signOut(auth);
 
-  // ---------- list + details ----------
-  let unsubscribeRuns = null;
-  function loadRunsLive() {
-    if (unsubscribeRuns) { unsubscribeRuns(); unsubscribeRuns = null; }
-    const user = auth.currentUser;
-    if (!user) return;
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) {
+      $('#login').style.display = '';
+      $('#logout').style.display = 'none';
+      $('#app').style.display = 'none';
+      return;
+    }
+    $('#login').style.display = 'none';
+    $('#logout').style.display = '';
+    $('#app').style.display = '';
 
-    const q = query(
-      collection(db, `users/${user.uid}/runsMeta`),
-      orderBy('startedAt', 'desc'),
-      limit(50)
-    );
+    // Lazy-load Firestore ONLY after auth succeeded
+    const {
+      getFirestore, doc, collection, setDoc, getDoc, onSnapshot,
+      query, orderBy, limit
+    } = await import("https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js");
+    const db = getFirestore(app);
 
-    unsubscribeRuns = onSnapshot(q, (snap) => {
-      runsList.innerHTML = '';
-      if (snap.empty) { emptyMsg.style.display = ''; return; }
-      emptyMsg.style.display = 'none';
-      snap.forEach(docSnap => {
-        const d = docSnap.data();
-        const li = document.createElement('li');
-        li.className = 'run';
-        const date = new Date(d.startedAt || 0);
-        li.innerHTML = `
-          <div><strong>${date.toLocaleString()}</strong></div>
-          <div class="muted">device: ${d.deviceId || '—'} · duration: ${d.durationSec ?? '—'}s · var: ${d.variance ?? '—'}</div>
-        `;
-        li.addEventListener('click', () => openRun(docSnap.id));
-        runsList.appendChild(li);
-      });
-    }, (err) => {
-      runsList.innerHTML = `<li class="muted">Error loading runs: ${err.code || err.message}</li>`;
-      log('List ERR:', err.code, err.message);
-    });
-  }
+    // Save button
+    $('#save').onclick = async () => {
+      const raw = $('#txt').value.trim();
+      const readings = raw.split(/[\s,]+/).map(Number).filter(Number.isFinite);
+      if (!readings.length) { $('#status').textContent = 'Enter numbers'; return; }
 
-  async function openRun(runId) {
-    const user = auth.currentUser;
-    if (!user) return;
-    detailsBody.textContent = 'Loading…';
-    try {
-      const dataRef = doc(db, `users/${user.uid}/runsData/${runId}`);
-      const metaRef = doc(db, `users/${user.uid}/runsMeta/${runId}`);
-      const [dataSnap, metaSnap] = await Promise.all([getDoc(dataRef), getDoc(metaRef)]);
+      const runId = crypto.randomUUID?.() || (Date.now().toString(36)+Math.random().toString(36).slice(2,8));
+      const uid = user.uid;
 
-      if (!dataSnap.exists() || !metaSnap.exists()) {
-        detailsBody.textContent = 'Run not found.';
-        return;
+      try {
+        await setDoc(doc(db, `users/${uid}/runsMeta/${runId}`), {
+          startedAt: Date.now(),
+          durationSec: readings.length,
+          deviceId: "web",
+          variance: 0
+        });
+        await setDoc(doc(db, `users/${uid}/runsData/${runId}`), { readings, notes: "" });
+        $('#status').textContent = 'Saved ✅';
+      } catch (e) {
+        $('#status').textContent = 'Save error: ' + (e.code || e.message);
+        log('Write ERR:', e.code, e.message);
       }
-      const data = dataSnap.data();
-      const meta = metaSnap.data();
-      const date = new Date(meta.startedAt || 0);
+    };
 
-      detailsBody.innerHTML = `
-        <div class="stack">
-          <div class="muted">Run ID: <code>${runId}</code></div>
-          <div><strong>${date.toLocaleString()}</strong></div>
-          <div class="muted">device: ${meta.deviceId || '—'} · duration: ${meta.durationSec ?? '—'}s · var: ${meta.variance ?? '—'}</div>
-          <div class="stack">
-            <strong>Readings (${(data.readings || []).length}):</strong>
-            <pre>${(data.readings || []).join(', ')}</pre>
-          </div>
-        </div>
-      `;
-    } catch (e) {
-      detailsBody.textContent = 'Error: ' + (e.code || e.message);
-      log('Details ERR:', e.code, e.message);
-    }
-  }
+    // Live list
+    const q = query(collection(db, `users/${user.uid}/runsMeta`), orderBy('startedAt','desc'), limit(20));
+    onSnapshot(q, (snap) => {
+      const ul = $('#list'); ul.innerHTML = '';
+      if (snap.empty) { ul.innerHTML = '<li class="muted">No runs yet</li>'; return; }
+      snap.forEach(d => {
+        const li = document.createElement('li');
+        const dt = new Date((d.data().startedAt)||0).toLocaleString();
+        li.textContent = dt;
+        ul.appendChild(li);
+      });
+    }, err => log('List ERR:', err.code || err.message));
+  });
 </script>
 </body>
 </html>
