@@ -3,20 +3,24 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Rink Buddy — Auth First</title>
+<title>Rink Buddy — Clean Auth + Firestore</title>
 <style>
   body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:20px}
   button{padding:8px 12px;border-radius:10px;border:1px solid #999;background:#fff;cursor:pointer}
   .muted{opacity:.8}
   pre{background:#f6f6f6;padding:10px;border-radius:8px;white-space:pre-wrap}
+  #app{display:none;margin-top:16px}
+  #list{padding-left:18px}
 </style>
 </head>
 <body>
-<h1>Rink Buddy — Auth First</h1>
-<p class="muted">This page signs in first, then lazy-loads Firestore. It also prints the <code>app.options</code> so we can verify the running config.</p>
+<h1>Rink Buddy — Clean Auth + Firestore</h1>
 
-<button id="login">Google Sign-In</button>
-<button id="logout" style="display:none">Sign out</button>
+<div>
+  <button id="login">Google Sign-In</button>
+  <button id="logout" style="display:none">Sign out</button>
+  <span id="who" class="muted"></span>
+</div>
 
 <h3>Runtime config</h3>
 <pre id="cfg"></pre>
@@ -24,19 +28,22 @@
 <h3>Log</h3>
 <pre id="log"></pre>
 
-<h3>Demo UI (appears after sign-in)</h3>
-<div id="app" style="display:none">
+<div id="app">
+  <h3>Create run</h3>
   <textarea id="txt" placeholder="12, 11.8, 13 ..." style="width:100%;min-height:90px"></textarea><br>
   <button id="save">Save run</button>
   <div id="status" class="muted"></div>
-  <h4>Past runs</h4>
+
+  <h3>Past runs</h3>
   <ul id="list"></ul>
 </div>
 
 <script type="module">
+  // AUTH ONLY first (exactly like your working test)
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
   import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
-  // IMPORTANT: paste the EXACT config that worked in your tiny test page:
+
+  // ⇩⇩ USE THE EXACT CONFIG FROM YOUR WEB APP CARD ⇩⇩
   const firebaseConfig = {
     apiKey: "AIzaSyC1YPYvyeUMpcr8qgUTifHJioCayhh7QCQ",
     authDomain: "rink-buddy-6f6ed.firebaseapp.com",
@@ -54,9 +61,10 @@
   const $ = s => document.querySelector(s);
   const log = (...a)=> { $('#log').textContent += a.join(' ') + "\n"; };
 
-  // Print the ACTUAL runtime options so we can compare keys visually
+  // Print the ACTUAL runtime config to verify at runtime
   $('#cfg').textContent = JSON.stringify(app.options, null, 2);
   log("Origin:", location.origin);
+  log("apiKey starts:", firebaseConfig.apiKey.slice(0,8) + "…");
 
   $('#login').onclick = async () => {
     try {
@@ -67,35 +75,37 @@
       alert(e.message || e);
     }
   };
+
   $('#logout').onclick = () => signOut(auth);
 
   onAuthStateChanged(auth, async (user) => {
     if (!user) {
+      $('#who').textContent = '';
       $('#login').style.display = '';
       $('#logout').style.display = 'none';
       $('#app').style.display = 'none';
       return;
     }
+    $('#who').textContent = ` Signed in as ${user.displayName || user.email}`;
     $('#login').style.display = 'none';
     $('#logout').style.display = '';
-    $('#app').style.display = '';
 
-    // Lazy-load Firestore ONLY after auth succeeded
+    // Only AFTER auth succeeds, load Firestore
     const {
-      getFirestore, doc, collection, setDoc, getDoc, onSnapshot,
-      query, orderBy, limit
+      getFirestore, doc, collection, setDoc, onSnapshot, query, orderBy, limit
     } = await import("https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js");
     const db = getFirestore(app);
 
-    // Save button
+    // Wire UI
+    $('#app').style.display = '';
+    $('#status').textContent = '';
+    const uid = user.uid;
+
     $('#save').onclick = async () => {
       const raw = $('#txt').value.trim();
       const readings = raw.split(/[\s,]+/).map(Number).filter(Number.isFinite);
       if (!readings.length) { $('#status').textContent = 'Enter numbers'; return; }
-
       const runId = crypto.randomUUID?.() || (Date.now().toString(36)+Math.random().toString(36).slice(2,8));
-      const uid = user.uid;
-
       try {
         await setDoc(doc(db, `users/${uid}/runsMeta/${runId}`), {
           startedAt: Date.now(),
@@ -105,21 +115,20 @@
         });
         await setDoc(doc(db, `users/${uid}/runsData/${runId}`), { readings, notes: "" });
         $('#status').textContent = 'Saved ✅';
+        $('#txt').value = '';
       } catch (e) {
         $('#status').textContent = 'Save error: ' + (e.code || e.message);
-        log('Write ERR:', e.code, e.message);
+        log('Write ERR:', e.code || e.message);
       }
     };
 
-    // Live list
-    const q = query(collection(db, `users/${user.uid}/runsMeta`), orderBy('startedAt','desc'), limit(20));
+    const q = query(collection(db, `users/${uid}/runsMeta`), orderBy('startedAt','desc'), limit(20));
     onSnapshot(q, (snap) => {
       const ul = $('#list'); ul.innerHTML = '';
       if (snap.empty) { ul.innerHTML = '<li class="muted">No runs yet</li>'; return; }
       snap.forEach(d => {
         const li = document.createElement('li');
-        const dt = new Date((d.data().startedAt)||0).toLocaleString();
-        li.textContent = dt;
+        li.textContent = new Date((d.data().startedAt)||0).toLocaleString();
         ul.appendChild(li);
       });
     }, err => log('List ERR:', err.code || err.message));
