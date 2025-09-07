@@ -29,7 +29,11 @@
 <body>
 
 <header>
-  <div class="row"><strong>Rink Buddy — Runs Logger</strong></div>
+  <div class="row">
+    <strong>Rink Buddy — Runs Logger</strong>
+    <!-- NEW: Start Laser Check button -->
+    <button id="btnLaserCheck" class="primary" style="margin-left:8px;">Start Laser Check</button>
+  </div>
   <div class="row" id="authRow">
     <span id="userInfo" class="muted">Signed out</span>
     <button id="btnSignIn" class="primary">Sign in with Google</button>
@@ -111,6 +115,13 @@
   const emptyMsg = document.getElementById('emptyMsg');
   const detailsBody = document.getElementById('detailsBody');
 
+  // NEW: Laser Check button handler
+  const btnLaserCheck = document.getElementById('btnLaserCheck');
+  btnLaserCheck.addEventListener('click', () => {
+    // Navigate to LaserCheck.html (same directory)
+    window.location.href = 'LaserCheck.html';
+  });
+
   // Auth
   btnSignIn.addEventListener('click', async () => {
     try { await signInWithPopup(auth, provider); }
@@ -161,11 +172,9 @@
       return;
     }
 
-    // Simple summary example
     const avg = readings.reduce((a,b)=>a+b,0) / readings.length;
     const variance = readings.reduce((a,b)=>a + (b-avg)*(b-avg), 0) / readings.length;
 
-    // Use a shared runId for meta + data
     const runId = crypto.randomUUID?.() || (Date.now().toString(36)+Math.random().toString(36).slice(2,8));
     const uid = user.uid;
 
@@ -177,9 +186,9 @@
 
     try {
       await setDoc(metaRef, {
-        startedAt: Date.now(),          // or serverTimestamp()
-        durationSec: readings.length,   // placeholder; adjust to your real duration
-        deviceId: 'web',                // set real device id if you have one
+        startedAt: Date.now(),
+        durationSec: readings.length,
+        deviceId: 'web',
         variance: Number(variance.toFixed(6))
       });
 
