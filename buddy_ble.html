@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BUDDY — Web Bluetooth UART</title>
+  <style>
+    :root{--bg:#0f1115;--fg:#e6e6e6;--muted:#9aa4b2;--accent:#4da3ff;}
+    body{margin:0;background:var(--bg);color:var(--fg);
+         font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    header{padding:16px 20px;border-bottom:1px solid #1c2030;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    h1{font-size:16px;margin:0}
+    button{background:var(--accent);color:#000;border:0;border-radius:10px;padding:10px 14px;
+           font-weight:600;cursor:pointer}
+    button.secondary{background:#2a2f42;color:var(--fg)}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    label{display:flex;align-items:center;gap:8px}
+    main{max-width:900px;margin:18px auto;padding:0 16px;display:grid;gap:12px}
+    .row{display:flex;gap:8px;flex-wrap:wrap}
+    #log{background:#0b0d12;border:1px solid #22283b;border-radius:12px;padding:12px;height:360px;overflow:auto;font-family:ui-monospace,Consolas,monospace}
+    .muted{color:var(--muted)}
+    input[type="text"]{flex:1;min-width:240px;background:#0b0d12;border:1px solid #22283b;color:var(--fg);
+                       padding:10px;border-radius:10px;outline:none}
+    .pill{display:inline-block;background:#1a2033;color:#9ec5ff;border:1px solid #233154;border-radius:999px;padding:2px 10px;margin-left:8px;font-size:12px}
+    .spacer{flex:1}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>BUDDY — Web Bluetooth UART <span id="status" class="pill">disconnected</span></h1>
+    <button id="btnConnect">Connect</button>
+    <button id="btnDisconnect" class="secondary" disabled>Disconnect</button>
+    <span class="spacer"></span>
+    <label title="If your device name isn't visible in advertisements, enable this and pick it from the chooser.">
+      <input type="checkbox" id="chkAll" />
+      Show all devices
+    </label>
+  </header>
+
+  <main>
+    <div class="row">
+      <input id="txInput" type="text" placeholder="Type text to send to BUDDY (BLE RX)..." disabled />
+      <button id="btnSend" disabled>Send</button>
+    </div>
+
+    <div id="log" aria-live="polite"></div>
+
+    <div class="muted">
+      Tip: Use Chrome on desktop. Serve this file from <b>http://localhost</b> (e.g., <code>python -m http.server 8000</code>) or HTTPS.
+      Web Bluetooth won’t work from <code>file://</code>.
+    </div>
+  </main>
+
+  <script>
+    // Nordic UART Service UUIDs (de-facto BLE "serial")
+    const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+    const NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // Write
+    const NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // Notify
+
+    const deviceNameFilter = 'BUDDY'; // Advertised name filter (optional)
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+
+    let device = null;
+    let server = null;
+    let nusService = null;
+    let rxChar = null; // write
+    let txChar = null; // notify
+
+    const el = s => document.querySelector(s);
+    const logBox = el('#log');
+    const statusPill = el('#status');
+    const btnConnect = el('#btnConnect');
+    const btnDisconnect = el('#btnDisconnect');
+    const btnSend = el('#btnSend');
+    const txInput = el('#txInput');
+    const chkAll = el('#chkAll');
+
+    function log(msg, cls='') {
+      const time = new Date().toLocaleTimeString();
+      const line = document.createElement('div');
+      line.innerHTML = `<span class="muted">[${time}]</span> ${msg}`;
+      if (cls) line.className = cls;
+      logBox.appendChild(line);
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function setConnectedUI(connected) {
+      statusPill.textContent = connected ? 'connected' : 'disconnected';
+      btnConnect.disabled = connected;
+      btnDisconnect.disabled = !connected;
+      btnSend.disabled = !connected;
+      txInput.disabled = !connected;
+    }
+
+    async function connect() {
+      try {
+        if (!('bluetooth' in navigator)) {
+          log('<b>Web Bluetooth not supported</b> in this browser. Use Chrome or Edge.');
+          return;
+        }
+
+        log('Requesting BLE device chooser…');
+        let options;
+        if (chkAll.checked) {
+          // Show everything; we’ll still request NUS as an optional service for access after connect
+          options = { acceptAllDevices: true, optionalServices: [NUS_SERVICE_UUID] };
+        } else {
+          // Stricter: only show devices advertising the exact name
+          options = { filters: [{ name: deviceNameFilter }], optionalServices: [NUS_SERVICE_UUID] };
+        }
+
+        device = await navigator.bluetooth.requestDevice(options);
+        device.addEventListener('gattserverdisconnected', onDisconnected);
+
+        log(`Connecting to GATT server on <b>${device.name || 'Unknown'}</b>…`);
+        server = await device.gatt.connect();
+
+        log('Getting NUS service…');
+        nusService = await server.getPrimaryService(NUS_SERVICE_UUID);
+
+        log('Getting TX (notify) characteristic…');
+        txChar = await nusService.getCharacteristic(NUS_TX_CHAR_UUID);
+        await txChar.startNotifications();
+        txChar.addEventListener('characteristicvaluechanged', handleNotification);
+        log('Notifications enabled.');
+
+        log('Getting RX (write) characteristic…');
+        rxChar = await nusService.getCharacteristic(NUS_RX_CHAR_UUID);
+
+        setConnectedUI(true);
+        log('<b>Ready.</b> You should see incoming frames (e.g., 800344) every second.');
+      } catch (err) {
+        log(`<span style="color:#ff8a8a">Error: ${err.message}</span>`);
+        try { if (device && device.gatt && device.gatt.connected) device.gatt.disconnect(); } catch(e){}
+        setConnectedUI(false);
+      }
+    }
+
+    function onDisconnected() {
+      log('<b>Disconnected.</b>');
+      setConnectedUI(false);
+    }
+
+    function handleNotification(event) {
+      // Convert DataView -> string (assumes ASCII/UTF-8)
+      const text = dec.decode(event.target.value);
+      log(`<b>RX:</b> ${escapeHtml(text)}`);
+    }
+
+    async function send() {
+      const text = txInput.value;
+      if (!text) return;
+      if (!rxChar) return log('Not connected.');
+      try {
+        await rxChar.writeValue(enc.encode(text));
+        log(`<span class="muted"><b>TX:</b> ${escapeHtml(text)}</span>`);
+        txInput.value = '';
+        txInput.focus();
+      } catch (err) {
+        log(`<span style="color:#ff8a8a">Send error: ${err.message}</span>`);
+      }
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, c => (
+        { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]
+      ));
+    }
+
+    // UI handlers
+    btnConnect.addEventListener('click', connect);
+    btnDisconnect.addEventListener('click', () => {
+      try { if (device && device.gatt.connected) device.gatt.disconnect(); } catch(e){}
+    });
+    btnSend.addEventListener('click', send);
+    txInput.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+
+    setConnectedUI(false);
+    log('Click <b>Connect</b> to select your device. If it doesn’t appear, enable <b>Show all devices</b>.');
+  </script>
+</body>
+</html>
