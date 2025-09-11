@@ -41,6 +41,7 @@
     <div class="row">
       <input id="txInput" type="text" placeholder="Type text to send to BUDDY (BLE RX)..." disabled />
       <button id="btnSend" disabled>Send</button>
+      <button id="btnAsk" class="secondary" disabled>Ask “?”</button>
     </div>
 
     <div id="log" aria-live="polite"></div>
@@ -52,20 +53,18 @@
   </main>
 
   <script>
-    // Nordic UART Service UUIDs (de-facto BLE "serial")
+    // Nordic UART Service UUIDs
     const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-    const NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // Write
-    const NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // Notify
+    const NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // Write / WriteNR
+    const NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // Notify-only on your ESP32
 
-    const deviceNameFilter = 'BUDDY'; // Advertised name filter (optional)
+    const deviceNameFilter = 'BUDDY';
     const enc = new TextEncoder();
     const dec = new TextDecoder();
 
-    let device = null;
-    let server = null;
-    let nusService = null;
-    let rxChar = null; // write
-    let txChar = null; // notify
+    let device = null, server = null, service = null, rxChar = null, txChar = null;
+    let inFlight = false;        // prevent double-requests
+    let askTimer = null;         // client-side timeout
 
     const el = s => document.querySelector(s);
     const logBox = el('#log');
@@ -73,8 +72,9 @@
     const btnConnect = el('#btnConnect');
     const btnDisconnect = el('#btnDisconnect');
     const btnSend = el('#btnSend');
+    const btnAsk  = el('#btnAsk');
     const txInput = el('#txInput');
-    const chkAll = el('#chkAll');
+    const chkAll  = el('#chkAll');
 
     function log(msg, cls='') {
       const time = new Date().toLocaleTimeString();
@@ -90,7 +90,12 @@
       btnConnect.disabled = connected;
       btnDisconnect.disabled = !connected;
       btnSend.disabled = !connected;
+      btnAsk.disabled  = !connected;
       txInput.disabled = !connected;
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
 
     async function connect() {
@@ -101,14 +106,9 @@
         }
 
         log('Requesting BLE device chooser…');
-        let options;
-        if (chkAll.checked) {
-          // Show everything; we’ll still request NUS as an optional service for access after connect
-          options = { acceptAllDevices: true, optionalServices: [NUS_SERVICE_UUID] };
-        } else {
-          // Stricter: only show devices advertising the exact name
-          options = { filters: [{ name: deviceNameFilter }], optionalServices: [NUS_SERVICE_UUID] };
-        }
+        const options = chkAll.checked
+          ? { acceptAllDevices: true, optionalServices: [NUS_SERVICE_UUID] }
+          : { filters: [{ name: deviceNameFilter }], optionalServices: [NUS_SERVICE_UUID] };
 
         device = await navigator.bluetooth.requestDevice(options);
         device.addEventListener('gattserverdisconnected', onDisconnected);
@@ -117,22 +117,22 @@
         server = await device.gatt.connect();
 
         log('Getting NUS service…');
-        nusService = await server.getPrimaryService(NUS_SERVICE_UUID);
+        service = await server.getPrimaryService(NUS_SERVICE_UUID);
 
         log('Getting TX (notify) characteristic…');
-        txChar = await nusService.getCharacteristic(NUS_TX_CHAR_UUID);
+        txChar = await service.getCharacteristic(NUS_TX_CHAR_UUID);
         await txChar.startNotifications();
         txChar.addEventListener('characteristicvaluechanged', handleNotification);
         log('Notifications enabled.');
 
         log('Getting RX (write) characteristic…');
-        rxChar = await nusService.getCharacteristic(NUS_RX_CHAR_UUID);
+        rxChar = await service.getCharacteristic(NUS_RX_CHAR_UUID);
 
         setConnectedUI(true);
-        log('<b>Ready.</b> You should see incoming frames (e.g., 800344) every second.');
+        log('<b>Ready.</b> Click <b>Ask “?”</b> to request the latest frame, or send custom text.');
       } catch (err) {
-        log(`<span style="color:#ff8a8a">Error: ${err.message}</span>`);
-        try { if (device && device.gatt && device.gatt.connected) device.gatt.disconnect(); } catch(e){}
+        log(`<span style="color:#ff8a8a">Error: ${escapeHtml(err.message)}</span>`);
+        safeDisconnect();
         setConnectedUI(false);
       }
     }
@@ -140,41 +140,61 @@
     function onDisconnected() {
       log('<b>Disconnected.</b>');
       setConnectedUI(false);
+      clearTimeout(askTimer);
+      inFlight = false;
+    }
+
+    function safeDisconnect() {
+      try { if (device && device.gatt && device.gatt.connected) device.gatt.disconnect(); } catch(e){}
     }
 
     function handleNotification(event) {
-      // Convert DataView -> string (assumes ASCII/UTF-8)
       const text = dec.decode(event.target.value);
       log(`<b>RX:</b> ${escapeHtml(text)}`);
+      // any incoming notification counts as a reply to the last request
+      inFlight = false;
+      clearTimeout(askTimer);
     }
 
-    async function send() {
-      const text = txInput.value;
-      if (!text) return;
+    async function sendRaw(text) {
       if (!rxChar) return log('Not connected.');
       try {
-        await rxChar.writeValue(enc.encode(text));
+        // Use Write Without Response to avoid ATT response stalls
+        await rxChar.writeValueWithoutResponse(enc.encode(text));
         log(`<span class="muted"><b>TX:</b> ${escapeHtml(text)}</span>`);
-        txInput.value = '';
-        txInput.focus();
       } catch (err) {
-        log(`<span style="color:#ff8a8a">Send error: ${err.message}</span>`);
+        log(`<span style="color:#ff8a8a">Send error: ${escapeHtml(err.message)}</span>`);
       }
     }
 
-    function escapeHtml(s) {
-      return s.replace(/[&<>"']/g, c => (
-        { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]
-      ));
+    async function sendInput() {
+      const text = txInput.value;
+      if (!text) return;
+      await sendRaw(text);
+      txInput.value = '';
+      txInput.focus();
+    }
+
+    async function askOnce() {
+      if (inFlight) return; // ignore rapid repeats
+      inFlight = true;
+      await sendRaw('?');
+      // Client-side timeout: if no notify in 2s, let the log show it (helps diagnose)
+      clearTimeout(askTimer);
+      askTimer = setTimeout(() => {
+        if (inFlight) {
+          log('<span style="color:#ffcf66">No response within 2s (possible RF congestion or device busy)</span>');
+          inFlight = false;
+        }
+      }, 2000);
     }
 
     // UI handlers
     btnConnect.addEventListener('click', connect);
-    btnDisconnect.addEventListener('click', () => {
-      try { if (device && device.gatt.connected) device.gatt.disconnect(); } catch(e){}
-    });
-    btnSend.addEventListener('click', send);
-    txInput.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+    btnDisconnect.addEventListener('click', safeDisconnect);
+    btnSend.addEventListener('click', sendInput);
+    btnAsk.addEventListener('click', askOnce);
+    txInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendInput(); });
 
     setConnectedUI(false);
     log('Click <b>Connect</b> to select your device. If it doesn’t appear, enable <b>Show all devices</b>.');
