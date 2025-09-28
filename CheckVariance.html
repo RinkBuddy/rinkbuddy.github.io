@@ -41,21 +41,30 @@
 
     main{ max-width:1100px; margin:16px auto; padding:0 12px 24px }
 
-    /* Force horizontal rink on desktop; refine to image ratio on load */
+    /* Horizontal rink container. Default to a strong landscape ratio; refine after image load. */
     .rinkWrap{
       position:relative; width:100%;
-      aspect-ratio: 200 / 85;          /* strong landscape default (horizontal) */
+      aspect-ratio: 200 / 85;  /* horizontal default */
       background:#0b0d12; border:1px solid #22283b; border-radius:14px; overflow:hidden;
     }
     @media (max-width: 720px){
-      .rinkWrap{ aspect-ratio: 200 / 100; } /* still landscape on mobile, just a bit taller */
+      .rinkWrap{ aspect-ratio: 200 / 100; } /* still horizontal on mobile */
     }
 
-    .rinkWrap img{
-      position:absolute; inset:0; width:100%; height:100%; object-fit:contain;
-      user-select:none; -webkit-user-drag:none; pointer-events:none;
+    /* A centering box that holds the rotated image */
+    .imgBox{
+      position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+      pointer-events:none;  /* image isn't interactive */
+    }
+    /* Rotate the vertical source to display horizontally */
+    .imgRot{
+      height:100%; width:auto;               /* fit by height */
+      transform: rotate(90deg);              /* make it horizontal */
+      transform-origin: 50% 50%;
+      user-select:none; -webkit-user-drag:none;
     }
 
+    /* Dot overlay lives in the same container, not rotated */
     .dot{
       position:absolute; width:34px; height:34px; border-radius:999px;
       transform:translate(-50%, -50%);
@@ -110,7 +119,9 @@
 
   <main>
     <div class="rinkWrap" id="rink">
-      <img id="rinkImg" alt="Rink" src="rink1.png">
+      <div class="imgBox">
+        <img id="rinkImg" class="imgRot" alt="Rink" src="rink1.png">
+      </div>
       <!-- dots injected here -->
     </div>
 
@@ -127,7 +138,7 @@
       onAuthStateChanged, signInWithPopup
     } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
     import {
-      getFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, serverTimestamp
+      getFirestore, doc, getDoc, collection, getDocs, addDoc, serverTimestamp
     } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -165,6 +176,7 @@
     let readings = [];         // [{index,label,value}]
     let imgReady = false;      // true after rink1.png has loaded
     let lastRenderedTemplateId = null;
+    let natW = 2000, natH = 850; // fallback
 
     /********************  Auth & initial data  ********************/
     onAuthStateChanged(auth, async (u) => {
@@ -230,25 +242,27 @@
 
     btnHome.addEventListener('click', () => { location.href = 'index.html'; });
 
-    /********************  Rink image ratio (keep horizontal)  ********************/
+    /********************  Rink image handling (rotate vertical -> horizontal)  ********************/
     rinkImg.addEventListener('load', () => {
-      // Ensure horizontal aspect and accurate ratio once the image is known
-      const natW = rinkImg.naturalWidth || 2000;
-      const natH = rinkImg.naturalHeight || 850;
-      rinkEl.style.aspectRatio = `${natW} / ${natH}`;
+      const w = rinkImg.naturalWidth || natW;
+      const h = rinkImg.naturalHeight || natH;
+
+      // Remember natural
+      natW = w; natH = h;
+
+      // The image itself is rotated 90deg CW via CSS.
+      // After rotation, its displayed aspect becomes w_rot = h, h_rot = w.
+      // Make the container match that exact landscape ratio.
+      rinkEl.style.aspectRatio = `${h} / ${w}`;
       imgReady = true;
 
-      // If a template was already selected but dots didn't render yet, (re)render now
+      // If a template was selected earlier, render (or re-render) its dots now.
       if (currentTemplate && lastRenderedTemplateId !== currentTemplate.id) {
         renderDots(currentTemplate.points || [], currentTemplate);
         lastRenderedTemplateId = currentTemplate.id;
       }
     });
-
-    // In case the image was cached and already complete before the event registered
-    if (rinkImg.complete) {
-      rinkImg.dispatchEvent(new Event('load'));
-    }
+    if (rinkImg.complete) rinkImg.dispatchEvent(new Event('load'));
 
     /********************  Template selection & dot rendering  ********************/
     selTemplate.addEventListener('change', () => {
@@ -257,13 +271,11 @@
       readings = [];
       btnSave.disabled = true;
 
-      // If the image is ready, render immediately; otherwise render on image load
       if (currentTemplate) {
         if (imgReady) {
           renderDots(currentTemplate.points || [], currentTemplate);
           lastRenderedTemplateId = currentTemplate.id;
         } else {
-          // Clear any prior dots; they will be placed on load
           clearDots();
           lastRenderedTemplateId = null;
         }
@@ -277,36 +289,43 @@
       rinkEl.querySelectorAll('.dot').forEach(n => n.remove());
     }
 
-    function isNormalizedPoint(p){
+    function isNormalized(p){
       return p && typeof p.x === 'number' && typeof p.y === 'number' &&
              p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
     }
 
-    function toPercentPos(p, tpl){
-      // Accept normalized or pixel-based points.
-      // If pixel-based, try to use template baseWidth/baseHeight, else fall back to image natural size.
-      if (isNormalizedPoint(p)){
-        return { leftPct: p.x * 100, topPct: p.y * 100 };
+    // Map a stored point (normalized 0..1 or pixels) to overlay percentages
+    // considering the IMAGE is rotated 90° clockwise for display.
+    function pointToPercent(p, tpl){
+      let xn, yn;
+      if (isNormalized(p)){
+        xn = p.x; yn = p.y;
       } else {
-        const baseW = (tpl && tpl.baseWidth)  || rinkImg.naturalWidth  || 2000;
-        const baseH = (tpl && tpl.baseHeight) || rinkImg.naturalHeight || 850;
-        return { leftPct: (p.x / baseW) * 100, topPct: (p.y / baseH) * 100 };
+        const baseW = (tpl && tpl.baseWidth)  || natW;
+        const baseH = (tpl && tpl.baseHeight) || natH;
+        xn = p.x / baseW;
+        yn = p.y / baseH;
       }
+      // Rotate CW 90° mapping (original -> displayed)
+      // x' = 1 - y,  y' = x
+      const xr = 1 - yn;
+      const yr = xn;
+      return { leftPct: xr * 100, topPct: yr * 100 };
     }
 
     function renderDots(points, tpl){
       clearDots();
       if (!points || !points.length) return;
 
-      // Ensure layout is ready
+      // Render all points (non-movable, light gray initially)
       requestAnimationFrame(() => {
         points.forEach((p, idx) => {
-          const { leftPct, topPct } = toPercentPos(p, tpl);
+          const { leftPct, topPct } = pointToPercent(p, tpl);
           const dot = document.createElement('button');
           dot.type = 'button';
           dot.className = 'dot gray';
-          dot.style.left = `${Math.min(100, Math.max(0, leftPct))}%`;
-          dot.style.top  = `${Math.min(100, Math.max(0, topPct))}%`;
+          dot.style.left = `${clamp01(leftPct/100)*100}%`;
+          dot.style.top  = `${clamp01(topPct/100)*100}%`;
           dot.title = p.label ? `Point ${p.label}` : `Point ${idx+1}`;
           dot.dataset.index = idx;
           dot.dataset.label = p.label ?? String(idx+1);
@@ -316,6 +335,8 @@
         });
       });
     }
+
+    function clamp01(v){ return Math.min(1, Math.max(0, Number(v))) }
 
     /********************  BLE (Nordic UART)  ********************/
     const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
