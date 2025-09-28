@@ -7,7 +7,7 @@
   <style>
     :root{
       --bg:#0f1115; --panel:#0b0d12; --line:#1c2030; --fg:#e6e6e6; --muted:#9aa4b2;
-      --accent:#4da3ff; --ok:#4da3ff; --dot-gray:#9aa4b2; --dot-blue:#4da3ff;
+      --accent:#4da3ff; --dot-gray:#c3c7d1; --dot-blue:#4da3ff;
     }
     *{box-sizing:border-box}
     html,body{height:100%}
@@ -36,37 +36,38 @@
     }
     .btn.secondary{ background:#2a2f42; color:var(--fg) }
     .btn:disabled{ opacity:.6; cursor:not-allowed }
+    .pill{ display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px;
+      background:#1a2033; color:#9ec5ff; border:1px solid #233154; margin-left:8px }
 
-    /* Canvas area */
     main{ max-width:1100px; margin:16px auto; padding:0 12px 24px }
+
+    /* Force horizontal rink on desktop; refine to image ratio on load */
     .rinkWrap{
       position:relative; width:100%;
-      /* Lock aspect like the templates page; we’ll refine to the image’s ratio on load */
-      aspect-ratio: 2 / 1;
+      aspect-ratio: 200 / 85;          /* strong landscape default (horizontal) */
       background:#0b0d12; border:1px solid #22283b; border-radius:14px; overflow:hidden;
     }
+    @media (max-width: 720px){
+      .rinkWrap{ aspect-ratio: 200 / 100; } /* still landscape on mobile, just a bit taller */
+    }
+
     .rinkWrap img{
       position:absolute; inset:0; width:100%; height:100%; object-fit:contain;
       user-select:none; -webkit-user-drag:none; pointer-events:none;
     }
+
     .dot{
       position:absolute; width:34px; height:34px; border-radius:999px;
       transform:translate(-50%, -50%);
       display:grid; place-items:center; font-weight:800; font-size:12px;
       border:2px solid rgba(0,0,0,.35); cursor:pointer;
-      color:#0b0d12; /* text color when blue */
+      transition:transform .06s ease;
     }
+    .dot:active{ transform:translate(-50%,-50%) scale(0.97) }
     .dot.gray{ background:var(--dot-gray); color:#0b0d12 }
     .dot.blue{ background:var(--dot-blue); color:#0b0d12 }
+
     .muted{ color:var(--muted) }
-    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:12px 0 }
-
-    /* Status pill */
-    .pill{ display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px;
-      background:#1a2033; color:#9ec5ff; border:1px solid #233154; margin-left:8px }
-
-    /* Small helper */
-    .spacer{ flex:1 }
   </style>
 </head>
 <body>
@@ -110,16 +111,16 @@
   <main>
     <div class="rinkWrap" id="rink">
       <img id="rinkImg" alt="Rink" src="rink1.png">
-      <!-- dots get injected here -->
+      <!-- dots injected here -->
     </div>
 
-    <div class="row muted" id="hint">
+    <p class="muted" style="margin-top:12px">
       • Tap a dot to query the device (sends “?”). The dot turns blue and shows the value when a reply arrives.
-    </div>
+    </p>
   </main>
 
   <script type="module">
-    /**** Firebase (v11) ****/
+    /********************  Firebase v11  ********************/
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
     import {
       getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence,
@@ -139,12 +140,12 @@
       measurementId: "G-7HPRJ6T9LD"
     };
 
-
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db   = getFirestore(app);
     setPersistence(auth, browserLocalPersistence);
 
+    /********************  DOM refs  ********************/
     const $ = s => document.querySelector(s);
     const rinkEl = $('#rink');
     const rinkImg = $('#rinkImg');
@@ -157,14 +158,17 @@
     const btnSave = $('#btnSave');
     const bleStatus = $('#bleStatus');
 
+    /********************  State  ********************/
     let user = null;
-    let templatesIdx = {}; // templateId -> template doc
+    let templatesIdx = {};     // templateId -> doc
     let currentTemplate = null;
-    let readings = []; // {index,label,value}
+    let readings = [];         // [{index,label,value}]
+    let imgReady = false;      // true after rink1.png has loaded
+    let lastRenderedTemplateId = null;
 
+    /********************  Auth & initial data  ********************/
     onAuthStateChanged(auth, async (u) => {
       if (!u) {
-        // Light-touch: prompt when needed. For convenience we’ll sign-in up front:
         try {
           const provider = new GoogleAuthProvider();
           user = (await signInWithPopup(auth, provider)).user;
@@ -182,7 +186,7 @@
 
     async function loadSettingsAndTemplates() {
       try {
-        // Settings (dropdowns)
+        // Settings dropdowns
         const sRef = doc(db, 'users', user.uid, 'meta', 'settings');
         const sSnap = await getDoc(sRef);
         const defaults = {
@@ -191,23 +195,22 @@
           employeeNames: ['Bob'],
         };
         const data = sSnap.exists() ? sSnap.data() : defaults;
-
         fillSelect(selRink, data.rinkNames?.length ? data.rinkNames : defaults.rinkNames);
         fillSelect(selPad,  data.padNames?.length ? data.padNames : defaults.padNames);
         fillSelect(selEmp,  data.employeeNames?.length ? data.employeeNames : defaults.employeeNames);
 
-        // Templates
+        // Templates list
         const tCol = collection(db, 'users', user.uid, 'templates');
         const tSnap = await getDocs(tCol);
-        const options = [];
         templatesIdx = {};
+        const opts = [{ value:'', label:'— Select —' }];
         tSnap.forEach(d => {
           const v = d.data();
           const name = v.name || d.id;
           templatesIdx[d.id] = { id:d.id, ...v };
-          options.push({ value:d.id, label:name });
+          opts.push({ value:d.id, label:name });
         });
-        fillSelect(selTemplate, [{value:'',label:'— Select —'}, ...options]);
+        fillSelect(selTemplate, opts);
       } catch (err) {
         console.error(err);
       }
@@ -217,64 +220,104 @@
       const cur = sel.value;
       sel.innerHTML = '';
       for (const it of items){
-        if (typeof it === 'string') {
-          const opt = document.createElement('option');
-          opt.textContent = it; opt.value = it;
-          sel.appendChild(opt);
-        } else {
-          const opt = document.createElement('option');
-          opt.textContent = it.label; opt.value = it.value;
-          sel.appendChild(opt);
-        }
+        const opt = document.createElement('option');
+        if (typeof it === 'string'){ opt.value = it; opt.textContent = it; }
+        else { opt.value = it.value; opt.textContent = it.label; }
+        sel.appendChild(opt);
       }
-      // keep prior value if possible
       if ([...sel.options].some(o=>o.value===cur)) sel.value = cur;
     }
 
     btnHome.addEventListener('click', () => { location.href = 'index.html'; });
 
-    // Maintain the container aspect to the image’s intrinsic ratio so it matches the templates page.
+    /********************  Rink image ratio (keep horizontal)  ********************/
     rinkImg.addEventListener('load', () => {
-      try {
-        const ratio = rinkImg.naturalWidth / rinkImg.naturalHeight;
-        rinkEl.style.aspectRatio = `${ratio} / 1`;
-        // The CSS aspect-ratio expects width/height. We’ll do width:height directly:
-        rinkEl.style.aspectRatio = `${rinkImg.naturalWidth} / ${rinkImg.naturalHeight}`;
-      } catch(e){}
+      // Ensure horizontal aspect and accurate ratio once the image is known
+      const natW = rinkImg.naturalWidth || 2000;
+      const natH = rinkImg.naturalHeight || 850;
+      rinkEl.style.aspectRatio = `${natW} / ${natH}`;
+      imgReady = true;
+
+      // If a template was already selected but dots didn't render yet, (re)render now
+      if (currentTemplate && lastRenderedTemplateId !== currentTemplate.id) {
+        renderDots(currentTemplate.points || [], currentTemplate);
+        lastRenderedTemplateId = currentTemplate.id;
+      }
     });
 
+    // In case the image was cached and already complete before the event registered
+    if (rinkImg.complete) {
+      rinkImg.dispatchEvent(new Event('load'));
+    }
+
+    /********************  Template selection & dot rendering  ********************/
     selTemplate.addEventListener('change', () => {
       const id = selTemplate.value;
       currentTemplate = id ? templatesIdx[id] : null;
       readings = [];
-      renderDots(currentTemplate?.points || []);
-      btnSave.disabled = true; // until at least one reading exists
+      btnSave.disabled = true;
+
+      // If the image is ready, render immediately; otherwise render on image load
+      if (currentTemplate) {
+        if (imgReady) {
+          renderDots(currentTemplate.points || [], currentTemplate);
+          lastRenderedTemplateId = currentTemplate.id;
+        } else {
+          // Clear any prior dots; they will be placed on load
+          clearDots();
+          lastRenderedTemplateId = null;
+        }
+      } else {
+        clearDots();
+        lastRenderedTemplateId = null;
+      }
     });
 
-    function renderDots(points){
-      // Clear existing dots
+    function clearDots(){
       rinkEl.querySelectorAll('.dot').forEach(n => n.remove());
+    }
+
+    function isNormalizedPoint(p){
+      return p && typeof p.x === 'number' && typeof p.y === 'number' &&
+             p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
+    }
+
+    function toPercentPos(p, tpl){
+      // Accept normalized or pixel-based points.
+      // If pixel-based, try to use template baseWidth/baseHeight, else fall back to image natural size.
+      if (isNormalizedPoint(p)){
+        return { leftPct: p.x * 100, topPct: p.y * 100 };
+      } else {
+        const baseW = (tpl && tpl.baseWidth)  || rinkImg.naturalWidth  || 2000;
+        const baseH = (tpl && tpl.baseHeight) || rinkImg.naturalHeight || 850;
+        return { leftPct: (p.x / baseW) * 100, topPct: (p.y / baseH) * 100 };
+      }
+    }
+
+    function renderDots(points, tpl){
+      clearDots();
       if (!points || !points.length) return;
 
-      // Render all dots as light gray, non-movable
-      points.forEach((p, idx) => {
-        const dot = document.createElement('button');
-        dot.type = 'button';
-        dot.className = 'dot gray';
-        dot.style.left = `${clamp01(p.x)*100}%`;
-        dot.style.top  = `${clamp01(p.y)*100}%`;
-        dot.title = p.label ? `Point ${p.label}` : `Point ${idx+1}`;
-        dot.dataset.index = idx;
-        dot.dataset.label = p.label ?? String(idx+1);
-        dot.textContent = p.label ?? String(idx+1);
-        dot.addEventListener('click', () => requestReadingForDot(dot));
-        rinkEl.appendChild(dot);
+      // Ensure layout is ready
+      requestAnimationFrame(() => {
+        points.forEach((p, idx) => {
+          const { leftPct, topPct } = toPercentPos(p, tpl);
+          const dot = document.createElement('button');
+          dot.type = 'button';
+          dot.className = 'dot gray';
+          dot.style.left = `${Math.min(100, Math.max(0, leftPct))}%`;
+          dot.style.top  = `${Math.min(100, Math.max(0, topPct))}%`;
+          dot.title = p.label ? `Point ${p.label}` : `Point ${idx+1}`;
+          dot.dataset.index = idx;
+          dot.dataset.label = p.label ?? String(idx+1);
+          dot.textContent = p.label ?? String(idx+1);
+          dot.addEventListener('click', () => requestReadingForDot(dot));
+          rinkEl.appendChild(dot);
+        });
       });
     }
 
-    function clamp01(v){ return Math.min(1, Math.max(0, Number(v))) }
-
-    /**** BLE (Nordic UART) ****/
+    /********************  BLE (Nordic UART)  ********************/
     const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
     const NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // write / writeNR
     const NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // notify
@@ -285,7 +328,7 @@
     let ble = { device:null, server:null, service:null, rx:null, tx:null, connected:false };
     let inFlight = false;
     let askTimer = null;
-    let pendingDot = null; // which dot we’re expecting to fill next
+    let pendingDot = null;
 
     function setBleUI(connected){
       bleStatus.textContent = connected ? 'connected' : 'disconnected';
@@ -324,13 +367,11 @@
 
     function handleNotify(ev){
       const text = dec.decode(ev.target.value).trim();
-      // Interpret like before: we sent “?”, we expect latest value frame.
       const value = parseIncomingValue(text);
       inFlight = false;
       clearTimeout(askTimer);
 
       if (pendingDot){
-        // Fill the dot visually + record the reading
         pendingDot.classList.remove('gray');
         pendingDot.classList.add('blue');
         pendingDot.textContent = value;
@@ -342,25 +383,21 @@
       }
     }
 
+    // Tolerant parser: first numeric token, else raw
     function parseIncomingValue(t){
-      // Best effort:
-      // 1) try to find a float in the string
       const m = t.match(/-?\d+(\.\d+)?/);
-      if (m) return m[0];
-      // 2) fallback to full text (some frames may already be ascii-decoded upstream)
-      return t;
+      return m ? m[0] : t;
     }
 
     async function sendRaw(str){
       if (!ble.connected || !ble.rx) return;
-      try{
-        await ble.rx.writeValueWithoutResponse(enc.encode(str));
-      }catch(err){ console.error('BLE send error', err); }
+      try{ await ble.rx.writeValueWithoutResponse(enc.encode(str)); }
+      catch(err){ console.error('BLE send error', err); }
     }
 
     async function requestReadingForDot(dotEl){
       if (!ble.connected){ alert('Connect to the BLE device first.'); return; }
-      if (inFlight) return; // prevent spam
+      if (inFlight) return;
       pendingDot = dotEl;
       inFlight = true;
       await sendRaw('?');
@@ -381,7 +418,7 @@
       else readings.push({ index, label, value });
     }
 
-    /**** SAVE to Firestore (variances) ****/
+    /********************  Save to Firestore (variances)  ********************/
     async function saveVariance(){
       if (!user){ alert('Sign in required.'); return; }
       if (!currentTemplate){ alert('Pick a template first.'); return; }
@@ -406,11 +443,11 @@
       }
     }
 
-    /**** Wire up UI ****/
+    /********************  Wire up UI  ********************/
     btnConnect.addEventListener('click', connectBle);
     btnSave.addEventListener('click', saveVariance);
 
-    // Prevent accidental image drag/ghost
+    // Prevent ghost-drag of image
     document.addEventListener('dragstart', e => { if (e.target.tagName==='IMG') e.preventDefault(); }, {capture:true});
   </script>
 </body>
