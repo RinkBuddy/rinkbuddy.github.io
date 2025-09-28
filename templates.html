@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Rink Templates</title>
+<style>
+  :root { --btn:#1f7aff; --danger:#ff4d4f; --dot-size:40px; }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{ margin:0; background:#000; color:#e9eef9; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  a{color:inherit}
+
+  /* Sticky header */
+  header{
+    position:sticky; top:0; z-index:20;
+    display:grid; grid-template-columns:auto 1fr auto auto auto; gap:10px; align-items:center;
+    padding:10px 12px; background:#0b0d13; border-bottom:1px solid #1b1e27;
+  }
+  .left{display:flex; gap:10px; align-items:center}
+  .center{display:flex; gap:10px; align-items:center; justify-content:center}
+  .right{display:flex; gap:10px; align-items:center; justify-content:flex-end}
+
+  .btn{
+    appearance:none; border:0; border-radius:999px; padding:10px 14px;
+    font-weight:700; color:#fff; cursor:pointer; background:var(--btn);
+    box-shadow:0 6px 14px rgba(31,122,255,.18);
+  }
+  .btn.secondary{ background:#22304b; border:1px solid #2b3a59; }
+  .btn.danger{ background:var(--danger); }
+  .btn:disabled{opacity:.6; cursor:not-allowed}
+  select, input[type="text"]{
+    background:#121623; color:#fff; border:1px solid #1f2637; border-radius:10px; padding:10px 12px; min-width:260px;
+    font-weight:600;
+  }
+  .name-wrap{display:flex; align-items:center; gap:8px}
+  .name-wrap label{color:#9fb0d0; font-weight:700}
+  .error{font-size:12px; color:#ff696b; margin-left:8px; display:none}
+  .error.show{display:inline}
+
+  /* Image-only symmetry toggle */
+  .iconbtn{ padding:0; border:0; background:transparent; display:inline-grid; place-items:center; cursor:pointer; }
+  .iconbtn img{ display:block; width:32px; height:32px; }
+  .iconbtn.off img{ filter:grayscale(1) opacity(.45); }
+  .iconbtn:focus-visible{ outline:2px solid #1f7aff; outline-offset:2px; }
+
+  /* Stage */
+  .stage{ display:flex; justify-content:center; align-items:center; width:100%; }
+  .viewport{
+    position:relative; margin:10px auto 0; border:1px solid #191c26; border-radius:14px;
+    overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.35); background:#000;
+  }
+  .viewport.placing{ cursor:crosshair; }
+  canvas#rink { display:block; width:100%; height:100%; }
+
+  .guide{ position:absolute; background:#00c2ff; opacity:.95; pointer-events:none; }
+  .guide.v{ top:0; bottom:0; width:2px; left:50%; transform:translateX(-1px); }
+  .guide.h{ left:0; right:0; height:2px; top:50%; transform:translateY(-1px); }
+
+  .dot{
+    position:absolute; transform:translate(-50%,-50%); width:var(--dot-size); height:var(--dot-size);
+    border-radius:999px; background:#1976d2; border:2px solid #fff; box-shadow:0 4px 12px rgba(0,0,0,.4);
+    display:grid; place-items:center; color:#fff; font-weight:800; user-select:none; cursor:grab; touch-action:none;
+  }
+  .dot:active{cursor:grabbing}
+  .dot.selected{outline:3px solid #00e0b8}
+  .viewport.placing .dot{ pointer-events:none; }
+
+  .hidden{display:none !important}
+  .auth-loading .app{visibility:hidden}
+</style>
+</head>
+<body class="auth-loading">
+<header>
+  <div class="left">
+    <button id="homeBtn" class="btn secondary">Home</button>
+    <button id="newTplBtn" class="btn secondary">Create New Template</button>
+  </div>
+
+  <div class="center" id="pickerRow">
+    <select id="templateSelect">
+      <option value="">Select a template…</option>
+    </select>
+  </div>
+
+  <div class="center hidden" id="nameRow">
+    <div class="name-wrap">
+      <label for="templateName">Template Name:</label>
+      <input id="templateName" type="text" placeholder="Custom" />
+      <span id="nameError" class="error">Name already used.</span>
+    </div>
+  </div>
+
+  <div class="right">
+    <div id="editTools" class="hidden" style="display:flex;gap:10px;align-items:center">
+      <button id="addBtn" class="btn">+ New Point</button>
+      <button id="symBtn" class="iconbtn" title="Toggle symmetry (on/off)" aria-pressed="true">
+        <img src="symmetry.png" alt="Symmetry">
+      </button>
+      <button id="delBtn" class="btn danger" disabled>Delete Selected</button>
+    </div>
+    <button id="saveBtn" class="btn" disabled>Save</button>
+    <button id="loginBtn" class="btn hidden">Sign in with Google</button>
+  </div>
+</header>
+
+<div class="app">
+  <div class="stage">
+    <div id="view" class="viewport">
+      <canvas id="rink"></canvas>
+      <div id="guide" class="guide v"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+/* -------------------- Firebase (Auth + Firestore) -------------------- */
+import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup,
+  onAuthStateChanged, setPersistence, browserLocalPersistence
+} from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
+import {
+  getFirestore, doc, collection, getDocs, getDoc, setDoc
+} from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
+
+/* your project */
+const firebaseConfig = {
+  apiKey: "AIzaSyCYlPYVyeUMpcr8qgUTifHJiOCayhh7QCQ",
+  authDomain: "rink-buddy-6f6ed.firebaseapp.com",
+  projectId: "rink-buddy-6f6ed",
+  storageBucket: "rink-buddy-6f6ed.appspot.com",
+  messagingSenderId: "1096930052063",
+  appId: "1:1096930052063:web:6b97608f1cdd3f5111666a",
+  measurementId: "G-7HPRJ6T9LD"
+};
+
+const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+/* persist across pages/tabs */
+await setPersistence(auth, browserLocalPersistence);
+
+/* -------------------- DOM refs -------------------- */
+const view = document.getElementById('view');
+const canvas = document.getElementById('rink');
+const ctx = canvas.getContext('2d', { willReadFrequently:true });
+const guide = document.getElementById('guide');
+
+const homeBtn = document.getElementById('homeBtn');
+const newTplBtn = document.getElementById('newTplBtn');
+const templateSelect = document.getElementById('templateSelect');
+const nameRow = document.getElementById('nameRow');
+const pickerRow = document.getElementById('pickerRow');
+const templateName = document.getElementById('templateName');
+const nameError = document.getElementById('nameError');
+
+const editTools = document.getElementById('editTools');
+const addBtn = document.getElementById('addBtn');
+const symBtn = document.getElementById('symBtn');
+const delBtn = document.getElementById('delBtn');
+const saveBtn = document.getElementById('saveBtn');
+const loginBtn = document.getElementById('loginBtn');
+
+/* -------------------- App state -------------------- */
+const img = new Image(); img.src = 'rink1.png';
+
+const state = {
+  naturalW: 600, naturalH: 1200,
+  mobile: false,
+  rotated: false,
+  centerY: 0.5,
+  snapPx: 12,
+  symmetry: true,
+  points: [],             // {id,u,v,mode:'mirrored'|'single'}
+  selectedIndex: null,
+  labels: new Map(),
+  showLabels: false,
+  maskData: null,
+  placing: false,
+  // template meta
+  uid: null,
+  allNames: [],           // existing template names for this user
+  currentName: null,      // name of the loaded/being-created template
+  creating: false         // whether we're in "Create New Template" mode
+};
+
+/* -------------------- Auth gate -------------------- */
+document.body.classList.add('auth-loading');
+onAuthStateChanged(auth, async (user) => {
+  document.body.classList.remove('auth-loading');
+  if (!user) {
+    loginBtn.classList.remove('hidden');
+    editTools.classList.add('hidden');
+    saveBtn.disabled = true;
+    await ensureCanvasReady(); // rink still renders
+    return;
+  }
+  loginBtn.classList.add('hidden');
+  state.uid = user.uid;
+  await refreshTemplateList();
+  await ensureCanvasReady();      // blank rink on load
+  setEditingEnabled(false);       // tools hidden until a template is chosen/created
+});
+
+/* Sign-in if needed (popup) */
+loginBtn.addEventListener('click', async ()=>{
+  const provider = new GoogleAuthProvider();
+  await signInWithPopup(auth, provider);
+});
+
+/* -------------------- Firestore helpers -------------------- */
+function userDocRef(uid){ return doc(db, 'users', uid); }
+function templatesColRef(uid){ return collection(userDocRef(uid), 'templates'); }
+function templateDocRef(uid, name){ return doc(templatesColRef(uid), name); }
+
+async function refreshTemplateList(){
+  if (!state.uid) return;
+  const snap = await getDocs(templatesColRef(state.uid));
+  state.allNames = snap.docs.map(d=>d.id).sort((a,b)=> a.localeCompare(b));
+  // rebuild picker
+  templateSelect.innerHTML = `<option value="">Select a template…</option>`;
+  state.allNames.forEach(n=>{
+    const opt = document.createElement('option');
+    opt.value = n; opt.textContent = n;
+    templateSelect.appendChild(opt);
+  });
+}
+
+async function loadTemplateByName(name){
+  const ref = templateDocRef(state.uid, name);
+  const docSnap = await getDoc(ref);
+  if (!docSnap.exists()) return false;
+  const data = docSnap.data();
+  state.currentName = name;
+  ingestTemplateJSON(data);
+  setEditingEnabled(true);
+  saveBtn.disabled = false;
+  // set picker to current
+  templateSelect.value = name;
+  // exit create mode if we were in it
+  setCreateMode(false);
+  return true;
+}
+
+async function saveTemplate(){
+  if (!state.uid) return;
+  if (!state.currentName || (state.creating && !isNameAvailable(state.currentName))) return;
+
+  computeAdjacencyNumbers();
+  state.showLabels = true;
+
+  const labelMap={};
+  for(const [k,val] of state.labels.entries()){
+    const [id,side]=k.split(':'); (labelMap[id]??={})[side]=val;
+  }
+  const docBody = {
+    name: state.currentName,
+    imagePath:'rink1.png',
+    imgW: state.naturalW, imgH: state.naturalH,
+    centerY: state.centerY, snapPx: state.snapPx,
+    points: state.points.map(p=>({ id:p.id, u:+p.u.toFixed(6), v:+p.v.toFixed(6), mode:p.mode, labels: labelMap[p.id] || {} })),
+    updatedAt: new Date().toISOString(), version: 2
+  };
+  await setDoc(templateDocRef(state.uid, state.currentName), docBody);
+  await refreshTemplateList();
+  // ensure picker shows it
+  templateSelect.value = state.currentName;
+  state.creating = false;
+  setEditingEnabled(true);
+}
+
+/* Name validation */
+function isNameAvailable(name){
+  if (!name) return false;
+  if (name.includes('/')) return false;        // Firestore doc id can't contain slashes
+  return !state.allNames.map(x=>x.toLowerCase()).includes(name.toLowerCase());
+}
+function updateNameValidation(){
+  const name = templateName.value.trim() || 'Custom';
+  state.currentName = name;
+  const ok = isNameAvailable(name);
+  nameError.textContent = name.includes('/') ? 'Name cannot include "/"' : 'Name already used.';
+  nameError.classList.toggle('show', !ok);
+  saveBtn.disabled = !ok;
+}
+
+/* -------------------- Header actions -------------------- */
+homeBtn.addEventListener('click', ()=>{ window.location.href = 'index.html'; });
+
+newTplBtn.addEventListener('click', ()=>{
+  setCreateMode(true);
+  state.currentName = 'Custom';
+  templateName.value = 'Custom';
+  updateNameValidation();
+  resetRink();            // blank canvas
+  setEditingEnabled(true);
+});
+
+templateSelect.addEventListener('change', async (e)=>{
+  const name = e.target.value;
+  if (!name) { setEditingEnabled(false); resetRink(); return; }
+  await loadTemplateByName(name);
+});
+
+templateName.addEventListener('input', updateNameValidation);
+
+/* -------------------- Toggle create/picker rows -------------------- */
+function setCreateMode(on){
+  state.creating = on;
+  nameRow.classList.toggle('hidden', !on);
+  pickerRow.classList.toggle('hidden',  on);
+}
+
+/* -------------------- Enable/disable edit tools -------------------- */
+function setEditingEnabled(on){
+  editTools.classList.toggle('hidden', !on);
+  saveBtn.disabled = !on || (state.creating && !isNameAvailable(state.currentName||''));
+}
+
+/* -------------------- Canvas & dots (same behavior as before) -------------------- */
+const uid = () => (crypto?.randomUUID ? crypto.randomUUID() : 'pt_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8));
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const isCenter=(v)=>Math.abs(v - state.centerY) < 1e-6;
+
+function setCanvasSize(w,h){
+  canvas.width  = Math.round(w);
+  canvas.height = Math.round(h);
+  view.style.width  = canvas.width + 'px';
+  view.style.height = canvas.height + 'px';
+}
+function applyLayout(){
+  state.mobile = window.matchMedia('(max-width: 900px)').matches;
+  const imageIsVertical = state.naturalH > state.naturalW;
+  const wantVertical    = state.mobile;
+  state.rotated = (wantVertical !== imageIsVertical);
+
+  const headerH = document.querySelector('header').offsetHeight;
+  const availW = window.innerWidth - 24;
+  const availH = window.innerHeight - headerH - 24;
+
+  const aspect = state.rotated ? (state.naturalH/state.naturalW) : (state.naturalW/state.naturalH);
+  let w = availW, h = w/aspect; if (h>availH){ h=availH; w=h*aspect; }
+  setCanvasSize(w,h);
+
+  guide.className = 'guide ' + (state.mobile ? 'h' : 'v');
+
+  const d = Math.max(2, Math.round(Math.min(canvas.width, canvas.height) * 0.10));
+  document.documentElement.style.setProperty('--dot-size', d + 'px');
+
+  state.points = state.points.map(p => ({...clampUvLoose(p.u,p.v), id:p.id, mode:p.mode}));
+
+  drawRink();
+  cacheMask();
+  renderDots();
+}
+function drawRink(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if (state.rotated){
+    ctx.save(); ctx.translate(canvas.width, 0); ctx.rotate(Math.PI/2);
+    ctx.drawImage(img, 0, 0, canvas.height, canvas.width);
+    ctx.restore();
+  } else {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  }
+}
+function cacheMask(){ try{ state.maskData = ctx.getImageData(0,0,canvas.width,canvas.height).data; }catch{ state.maskData=null; } }
+
+function uvToCanvas(u,v){ return state.mobile ? { x:u*canvas.width, y:v*canvas.height } : { x:(1-v)*canvas.width, y:u*canvas.height }; }
+function canvasToUv(x,y){ const sx=clamp(x/canvas.width,0,1), sy=clamp(y/canvas.height,0,1); return state.mobile ? {u:sx, v:sy} : {u:sy, v:1-sx}; }
+
+function dotRadius(){ return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dot-size'))/2; }
+function clampUvLoose(u,v){ const mu=1/canvas.width, mv=1/canvas.height; return { u:clamp(u,mu,1-mu), v:clamp(v,mv,1-mv) }; }
+function alphaAtCanvas(x,y){ if(!state.maskData) return 255; const W=canvas.width,H=canvas.height; const xi=Math.max(0,Math.min(W-1,x|0)), yi=Math.max(0,Math.min(H-1,y|0)); return state.maskData[(yi*W+xi)*4+3]; }
+function centerOnIce(u,v){ const c=uvToCanvas(u,v); if(c.x<0||c.y<0||c.x>canvas.width||c.y>canvas.height) return false; return alphaAtCanvas(c.x,c.y)>=8; }
+
+function projectInside(last, proposed){
+  if (!state.maskData) return clampUvLoose(proposed.u, proposed.v);
+  if (centerOnIce(proposed.u, proposed.v)) return proposed;
+  if (!centerOnIce(last.u, last.v)) return last;
+  let a={...last}, b={...proposed};
+  for(let i=0;i<18;i++){ const m={u:(a.u+b.u)/2, v:(a.v+b.v)/2}; if(centerOnIce(m.u,m.v)) a=m; else b=m; }
+  return a;
+}
+
+/* rendering */
+function clearDots(){ view.querySelectorAll('.dot').forEach(n=>n.remove()); }
+function renderDots(){
+  clearDots();
+  state.points.forEach((pt, idx) => {
+    if (pt.mode === 'single'){
+      addDotAtUV(pt.u, pt.v, idx, 'single', '');
+    } else {
+      if (isCenter(pt.v)){
+        addDotAtUV(pt.u, state.centerY, idx, 'center', '');
+      } else {
+        const vTop = Math.min(pt.v, 2*state.centerY - pt.v);
+        const vBot = Math.max(pt.v, 2*state.centerY - pt.v);
+        addDotAtUV(pt.u, vTop, idx, 'top', '');
+        addDotAtUV(pt.u, vBot, idx, 'bottom', '');
+      }
+    }
+  });
+}
+function addDotAtUV(u,v, idx, side, text){
+  const p=uvToCanvas(u,v);
+  const d=document.createElement('div');
+  d.className='dot'; d.dataset.idx=String(idx); d.dataset.side=side; d.dataset.mode=state.points[idx].mode;
+  d.textContent=text||''; d.style.left=(p.x/canvas.width*100)+'%'; d.style.top=(p.y/canvas.height*100)+'%';
+  if (state.selectedIndex===idx) d.classList.add('selected');
+  d.addEventListener('pointerdown', onDragStart);
+  d.addEventListener('click', (e)=>{ e.stopPropagation(); if(state.placing) return; state.selectedIndex=idx; delBtn.disabled=false; renderDots(); });
+  view.appendChild(d);
+}
+
+/* helpers */
+function localXY(e){ const r=view.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; }
+
+/* dragging */
+let dragging=null; // {idx, side, mode, last:{u,v}, wasOnCenter}
+function onDragStart(e){
+  if (state.placing) return;
+  e.preventDefault();
+  const idx=+e.currentTarget.dataset.idx; const side=e.currentTarget.dataset.side; const pt=state.points[idx]; if(!pt) return;
+  state.selectedIndex=idx; delBtn.disabled=false;
+  dragging={idx, side, mode:pt.mode, last:{u:pt.u, v:pt.v}, wasOnCenter:isCenter(pt.v)};
+  e.currentTarget.setPointerCapture(e.pointerId);
+  window.addEventListener('pointermove', onDragMove);
+  window.addEventListener('pointerup', onDragEnd);
+}
+function onDragMove(e){
+  if(!dragging) return;
+  const pt=state.points[dragging.idx];
+  const {x,y}=localXY(e);
+  let {u,v}=canvasToUv(x,y);
+  ({u,v}=clampUvLoose(u,v));
+
+  const axisPx = state.mobile ? canvas.height : canvas.width;
+  const eps = state.snapPx / axisPx;
+  const breakEps = eps * 1.2;
+
+  if (dragging.mode === 'mirrored'){
+    if (dragging.side === 'bottom') v = 2*state.centerY - v;
+    v = Math.min(v, state.centerY);            // never cross
+    const dist=Math.abs(v-state.centerY);
+    if (dist<=eps){ v=state.centerY; dragging.wasOnCenter=true; }
+    else if (dragging.wasOnCenter && dist>breakEps){ dragging.wasOnCenter=false; }
+    const proposed={u,v}; const resolved=centerOnIce(u,v)?proposed:projectInside(dragging.last,proposed);
+    pt.u=resolved.u; pt.v=resolved.v; dragging.last=resolved;
+  } else {
+    const dist=Math.abs(v-state.centerY);
+    if (dist<=eps){ v=state.centerY; dragging.wasOnCenter=true; }
+    else if (dragging.wasOnCenter && dist>breakEps){ dragging.wasOnCenter=false; }
+    const proposed={u,v}; const resolved=centerOnIce(u,v)?proposed:projectInside(dragging.last,proposed);
+    pt.u=resolved.u; pt.v=resolved.v; dragging.last=resolved;
+  }
+  renderDots();
+}
+function onDragEnd(){
+  dragging=null;
+  window.removeEventListener('pointermove', onDragMove);
+  window.removeEventListener('pointerup', onDragEnd);
+}
+
+/* placing mode */
+let placeHandler=null, escHandler=null;
+function enterPlacing(){
+  if (state.placing) return;
+  state.placing=true; view.classList.add('placing'); addBtn.textContent='Click to place… (Esc to cancel)'; delBtn.disabled=true;
+  placeHandler=(e)=>{
+    const {x,y}=localXY(e); let {u,v}=canvasToUv(x,y); ({u,v}=clampUvLoose(u,v));
+    const axisPx = state.mobile ? canvas.height : canvas.width; const eps=state.snapPx/axisPx; if (Math.abs(v-state.centerY)<=eps) v=state.centerY;
+    if (!state.maskData || centerOnIce(u,v)){
+      if (state.symmetry){ const vTop=Math.min(v, 2*state.centerY - v); state.points.push({id:uid(), u, v:vTop, mode:'mirrored'}); }
+      else { state.points.push({id:uid(), u, v, mode:'single'}); }
+      state.selectedIndex=null;
+    }
+    exitPlacing(); renderDots();
+  };
+  escHandler=(e)=>{ if(e.key==='Escape') exitPlacing(); };
+  view.addEventListener('pointerdown', placeHandler, {once:true});
+  window.addEventListener('keydown', escHandler, {once:true});
+}
+function exitPlacing(){
+  if(!state.placing) return;
+  state.placing=false; view.classList.remove('placing'); addBtn.textContent='+ New Point';
+  try{ view.removeEventListener('pointerdown', placeHandler, {once:true}); }catch{}
+  try{ window.removeEventListener('keydown', escHandler, {once:true}); }catch{}
+  placeHandler=escHandler=null;
+}
+addBtn.addEventListener('click', ()=>{ if(!editTools.classList.contains('hidden')){ state.placing?exitPlacing():enterPlacing(); }});
+symBtn.addEventListener('click', ()=>{ state.symmetry=!state.symmetry; symBtn.classList.toggle('off', !state.symmetry); symBtn.setAttribute('aria-pressed', state.symmetry?'true':'false'); });
+delBtn.addEventListener('click', ()=>{ const i=state.selectedIndex; if(i==null) return; state.points.splice(i,1); state.selectedIndex=null; delBtn.disabled=true; renderDots(); });
+
+/* clear selection on empty press */
+view.addEventListener('pointerdown', (e)=>{ if(state.placing) return; if(e.target.classList.contains('dot')) return; state.selectedIndex=null; delBtn.disabled=true; renderDots(); });
+
+/* numbering on save (adjacency in canonical portrait) */
+function computeAdjacencyNumbers(){
+  const nodes=[];
+  state.points.forEach(pt=>{
+    if (pt.mode==='single'){ nodes.push({id:pt.id, side:'single', u:pt.u, v:pt.v}); }
+    else if (isCenter(pt.v)){ nodes.push({id:pt.id, side:'center', u:pt.u, v:state.centerY}); }
+    else {
+      const vTop=Math.min(pt.v, 2*state.centerY - pt.v), vBot=Math.max(pt.v, 2*state.centerY - pt.v);
+      nodes.push({id:pt.id, side:'top', u:pt.u, v:vTop}); nodes.push({id:pt.id, side:'bottom', u:pt.u, v:vBot});
+    }
+  });
+  if(!nodes.length){ state.labels.clear(); return; }
+  const un=nodes.slice().sort((a,b)=>(a.v-b.v)||(a.u-b.u));
+  const seq=[un.shift()];
+  while(un.length){
+    const last=seq[seq.length-1]; let best=Infinity, idx=0;
+    for(let i=0;i<un.length;i++){ const du=un[i].u-last.u, dv=un[i].v-last.v, d=du*du+dv*dv;
+      if (d<best-1e-9 || (Math.abs(d-best)<1e-9 && ((un[i].v<un[idx].v-1e-9)|| (Math.abs(un[i].v-un[idx].v)<1e-9 && un[i].u<un[idx].u)))){ best=d; idx=i; }
+    } seq.push(un.splice(idx,1)[0]);
+  }
+  state.labels.clear(); for(let i=0;i<seq.length;i++){ state.labels.set(`${seq[i].id}:${seq[i].side}`, i+1); }
+}
+
+/* ingest/export */
+function resetRink(){
+  state.points=[]; state.selectedIndex=null; state.labels.clear(); state.showLabels=false; delBtn.disabled=true; renderDots();
+}
+function ingestTemplateJSON(data){
+  resetRink();
+  state.points = Array.isArray(data.points) ? data.points.map(p=>({
+    id: p.id || uid(),
+    u: +p.u, v: +p.v,
+    mode: p.mode==='single' ? 'single' : 'mirrored'
+  })) : [];
+  renderDots();
+}
+
+/* Save button */
+saveBtn.addEventListener('click', async ()=>{ await saveTemplate(); });
+
+/* layout boot */
+async function ensureCanvasReady(){
+  if (img.complete) { state.naturalW=img.naturalWidth||state.naturalW; state.naturalH=img.naturalHeight||state.naturalH; applyLayout(); }
+  else { await new Promise(res=>{ img.onload=()=>{ state.naturalW=img.naturalWidth||state.naturalW; state.naturalH=img.naturalHeight||state.naturalH; applyLayout(); res(); }; }); }
+}
+window.addEventListener('resize', applyLayout);
+</script>
+</body>
+</html>
