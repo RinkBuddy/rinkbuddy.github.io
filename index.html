@@ -8,7 +8,7 @@
 <style>
   :root{
     --btn-start:#3f3d73;
-    --btn-end:#5a58a8;        /* slightly lighter for gradient */
+    --btn-end:#5a58a8;
     --text:#ffffff;
     --shadow: rgba(0,0,0,.35);
   }
@@ -37,7 +37,6 @@
     margin:0 auto 24px;
     filter: drop-shadow(0 10px 24px var(--shadow));
   }
-
   .buttons{ display:grid; gap:14px; margin-top:12px; }
   .rb-btn{
     display:block; width:100%;
@@ -51,14 +50,9 @@
   }
   .rb-btn:hover{ transform: translateY(-1px); filter:brightness(1.04) }
   .rb-btn:active{ transform: translateY(0); filter:brightness(.97) }
-
   #gsi{ display:flex; justify-content:center; margin-top:8px; }
-
   .pending{ margin-top:10px; font-weight:600; text-shadow:0 2px 10px var(--shadow); }
-
-  @media (min-width:640px){
-    .buttons{ grid-template-columns: repeat(3, 1fr) }
-  }
+  @media (min-width:640px){ .buttons{ grid-template-columns: repeat(3, 1fr) } }
 </style>
 </head>
 <body>
@@ -67,7 +61,7 @@
   <main class="card">
     <img class="logo" src="RinkBuddy.png" alt="Rink Buddy logo">
 
-    <!-- Signed-out state -->
+    <!-- Signed-out -->
     <div id="signedOut" style="display:none;">
       <div id="gsi"></div>
     </div>
@@ -88,7 +82,7 @@
   <!-- Official Google Identity Services -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
-  <!-- Firebase (v11) -->
+  <!-- Firebase v11 (modular) -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
     import {
@@ -154,6 +148,7 @@
     let gsiInitialized = false;
     function renderGoogleButton(){
       if (gsiInitialized) return;
+
       const clientId = "1096930052063-f8mruob20i6k7s2e1tiem96ic1ek4h4s.apps.googleusercontent.com";
 
       if (!window.google || !google.accounts || !google.accounts.id) {
@@ -192,12 +187,12 @@
       signedOutEl.style.display = "";
     }
 
-    // ---------- Ensure user doc exists (without overwriting activation) ----------
-    async function ensureUserDoc(user){
+    // ---------- Ensure user doc + create SubscriptionActive ----------
+    async function ensureUserDocAndSubscription(user){
       const ref = doc(db, "users", user.uid);
       const snap = await getDoc(ref);
 
-      // Create/merge a minimal profile; do NOT flip SubscriptionActive
+      // Base profile fields to keep updated
       const base = {
         email: user.email || null,
         displayName: user.displayName || null,
@@ -206,15 +201,25 @@
       };
 
       if (!snap.exists()) {
+        // First sign-in: create doc and set SubscriptionActive:false
         await setDoc(ref, {
           ...base,
           createdAt: serverTimestamp(),
-          // Leave SubscriptionActive undefined/falsey for admins to set
+          SubscriptionActive: false
         }, { merge: true });
+        return false; // not active yet
       } else {
+        // Update profile fields
         await setDoc(ref, base, { merge: true });
+
+        // If field is missing, add it as false (one-time)
+        const data = snap.data();
+        if (typeof data.SubscriptionActive === "undefined") {
+          await setDoc(ref, { SubscriptionActive: false }, { merge: true });
+          return false;
+        }
+        return !!data.SubscriptionActive;
       }
-      return ref;
     }
 
     // ---------- Auth state + subscription check ----------
@@ -225,15 +230,8 @@
       }
 
       try{
-        const ref = await ensureUserDoc(user);
-        const snap = await getDoc(ref);
-        const active = snap.exists() ? !!snap.data().SubscriptionActive : false;
-
-        if (active) {
-          showMenu();
-        } else {
-          showPending();
-        }
+        const active = await ensureUserDocAndSubscription(user);
+        if (active) showMenu(); else showPending();
       }catch(err){
         console.error("Subscription check failed:", err);
         showPending(); // conservative fallback
