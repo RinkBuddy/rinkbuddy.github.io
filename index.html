@@ -10,9 +10,8 @@
 
 <style>
   :root{
-    /* brighter blue, closer to your logo’s glow */
-    --btn-start:#0022ff;      /* bright royal */
-    --btn-end:#080D85;        /* lighter electric */
+    --btn-start:#0022ff;   /* your brighter royal */
+    --btn-end:#080D85;     /* deep blue */
     --text:#ffffff;
     --shadow: rgba(0,0,0,.35);
   }
@@ -23,27 +22,25 @@
     color:var(--text);
     background:#000 url("TitleBackground.png") center/cover no-repeat fixed;
     display:grid;
-    grid-template-rows:auto 1fr;
+    grid-template-rows:1fr;
     font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
   }
 
-  /* Top-right logout bar (hidden until signed in) */
-  header{
-    display:flex; justify-content:flex-end; align-items:center;
-    padding:10px 14px;
-    background:linear-gradient(to bottom, rgba(0,0,0,.35), rgba(0,0,0,0));
-  }
+  /* Fixed Logout button (hidden until signed in) */
   #logoutBtn{
     display:none; /* shown when signed in */
-    border:0; border-radius:10px;
+    position:fixed; top:12px; right:12px; z-index:1000;
+    border:0; border-radius:12px;
     padding:10px 14px;
-    font-weight:700;
-    background:rgba(0,0,0,.55);
+    font-weight:800;
+    background:rgba(0,0,0,.68);
     color:#fff;
-    box-shadow:0 4px 14px var(--shadow);
+    box-shadow:0 6px 18px rgba(0,0,0,.4);
     cursor:pointer;
+    backdrop-filter:saturate(1.2) blur(4px);
+    transition:transform .07s ease, filter .2s ease;
   }
-  #logoutBtn:hover{ filter:brightness(1.06) }
+  #logoutBtn:hover{ transform:translateY(-1px); filter:brightness(1.07); }
 
   .scrim{position:fixed; inset:0; background:linear-gradient(to bottom, rgba(0,0,32,.20), rgba(0,0,0,.55)); pointer-events:none;}
   .card{
@@ -87,8 +84,7 @@
   .rb-btn span{
     display:block;
     font-family:"Russo One", system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-    /* ~40% bigger than typical 16px, responsive with clamp */
-    font-size: clamp(20px, 4.2vw, 28px);
+    font-size: clamp(20px, 4.2vw, 28px); /* about +40% vs default */
     letter-spacing:.3px;
     text-shadow: 0 2px 12px rgba(0,0,0,.35);
   }
@@ -100,9 +96,8 @@
 </style>
 </head>
 <body>
-  <header>
-    <button id="logoutBtn" title="Log out">Logout</button>
-  </header>
+  <!-- Fixed Logout -->
+  <button id="logoutBtn" title="Log out">Logout</button>
 
   <div class="scrim" aria-hidden="true"></div>
 
@@ -289,7 +284,7 @@
       try{
         const u = auth.currentUser;
         if (u && window.google?.accounts?.id?.revoke) {
-          // Revoke the Google session so user can pick a different account immediately
+          // Revoke Google session so user can pick a different account immediately
           window.google.accounts.id.revoke(u.email, () => {});
         }
         await signOut(auth);
@@ -303,7 +298,7 @@
       }
     });
 
-    // Optional: expose in console as well
+    // Optional console helper
     window.rbSignOut = async () => logoutBtn.click();
   </script>
 </body>
