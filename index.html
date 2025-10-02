@@ -28,7 +28,7 @@
 
   /* Fixed Logout button (hidden until signed in) */
   #logoutBtn{
-    display:none; /* shown when signed in */
+    display:none; /* shown via JS -> inline-block */
     position:fixed; top:12px; right:12px; z-index:1000;
     border:0; border-radius:12px;
     padding:10px 14px;
@@ -84,7 +84,7 @@
   .rb-btn span{
     display:block;
     font-family:"Russo One", system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-    font-size: clamp(20px, 4.2vw, 28px); /* about +40% vs default */
+    font-size: clamp(20px, 4.2vw, 28px); /* ~+40% */
     letter-spacing:.3px;
     text-shadow: 0 2px 12px rgba(0,0,0,.35);
   }
@@ -182,13 +182,13 @@
       signedOutEl.style.display = "none";
       pendingEl.style.display = "none";
       menuEl.style.display = "";
-      logoutBtn.style.display = "";  // show logout when signed in
+      logoutBtn.style.display = "inline-block";  // <-- explicit override
     }
     function showPending(){
       signedOutEl.style.display = "none";
       menuEl.style.display = "none";
       pendingEl.style.display = "";
-      logoutBtn.style.display = "";  // still allow logout/change account
+      logoutBtn.style.display = "inline-block";  // <-- explicit override
     }
 
     // ---------- Google button (GIS) ----------
