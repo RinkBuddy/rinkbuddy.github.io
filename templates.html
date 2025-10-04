@@ -43,8 +43,7 @@
   .iconbtn.off img{ filter:grayscale(1) opacity(.45); }
   .iconbtn:focus-visible{ outline:2px solid #1f7aff; outline-offset:2px; }
 
-  /* Stage */
-  .app{ /* desktop: natural flow */ }
+  /* Stage / viewport */
   .stage{ display:flex; justify-content:center; align-items:center; width:100%; }
   .viewport{
     position:relative; margin:10px auto 0; border:1px solid #191c26; border-radius:14px;
@@ -69,10 +68,14 @@
   .hidden{display:none !important}
   .auth-loading .app{visibility:hidden}
 
+  /* Desktop height helper: let stage fill viewport below header */
+  @media (min-width: 901px){
+    .stage{ min-height: calc(100vh - var(--hdrH)); }
+  }
+
   /* ---------- MOBILE-ONLY LAYOUT ---------- */
   @media (max-width: 900px){
-    /* No vertical page scroll */
-    html, body { height: 100svh; overflow: hidden; }
+    html, body { height: 100svh; overflow: hidden; }   /* no vertical scroll */
 
     /* Fixed header that can scroll left-right */
     header{
@@ -84,11 +87,11 @@
     header::-webkit-scrollbar{display:none}
     .left,.center,.right{display:inline-flex; gap:10px; align-items:center}
 
-    /* The app fills everything below the fixed header */
+    /* The app fills everything under the fixed header */
     .app{
-      padding-top: var(--hdrH);           /* reserve space under header */
-      height: 100svh;                     /* full viewport; header space is in padding */
-      overflow:hidden;                    /* never scroll vertically */
+      padding-top: var(--hdrH);
+      height: 100svh;
+      overflow:hidden;
     }
     .stage{ height: calc(100svh - var(--hdrH)); align-items:center; justify-content:center; }
     .viewport{ margin:6px auto 0; }
@@ -149,7 +152,7 @@ import {
   getFirestore, doc, collection, getDocs, getDoc, setDoc
 } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
 
-/* Your project config */
+/* Config */
 const firebaseConfig = {
   apiKey: "AIzaSyCYlPYVyeUMpcr8qgUTifHJiOCayhh7QCQ",
   authDomain: "rink-buddy-6f6ed.firebaseapp.com",
@@ -163,11 +166,9 @@ const firebaseConfig = {
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
-
-/* Persist login across pages */
 await setPersistence(auth, browserLocalPersistence);
 
-/* -------------------- DOM refs -------------------- */
+/* -------------------- DOM -------------------- */
 const view = document.getElementById('view');
 const canvas = document.getElementById('rink');
 const ctx = canvas.getContext('2d', { willReadFrequently:true });
@@ -188,7 +189,7 @@ const delBtn = document.getElementById('delBtn');
 const saveBtn = document.getElementById('saveBtn');
 const loginBtn = document.getElementById('loginBtn');
 
-/* -------------------- App state -------------------- */
+/* -------------------- State -------------------- */
 const img = new Image(); img.src = 'rink1.png';
 
 const state = {
@@ -227,8 +228,6 @@ onAuthStateChanged(auth, async (user) => {
   await ensureCanvasReady();
   setEditingEnabled(false);
 });
-
-/* Sign-in button (popup) */
 loginBtn.addEventListener('click', async ()=>{
   const provider = new GoogleAuthProvider();
   await signInWithPopup(auth, provider);
@@ -250,7 +249,6 @@ async function refreshTemplateList(){
     templateSelect.appendChild(opt);
   });
 }
-
 async function loadTemplateByName(name){
   const ref = templateDocRef(state.uid, name);
   const docSnap = await getDoc(ref);
@@ -264,7 +262,6 @@ async function loadTemplateByName(name){
   setCreateMode(false);
   return true;
 }
-
 async function saveTemplate(){
   if (!state.uid) return;
   if (!state.currentName || (state.creating && !isNameAvailable(state.currentName))) return;
@@ -308,7 +305,6 @@ function updateNameValidation(){
 
 /* Header actions */
 homeBtn.addEventListener('click', ()=>{ window.location.href = 'index.html'; });
-
 newTplBtn.addEventListener('click', ()=>{
   setCreateMode(true);
   state.currentName = 'Custom';
@@ -317,7 +313,6 @@ newTplBtn.addEventListener('click', ()=>{
   resetRink();
   setEditingEnabled(true);
 });
-
 templateSelect.addEventListener('change', async (e)=>{
   const name = e.target.value;
   if (!name) { setEditingEnabled(false); resetRink(); return; }
@@ -335,7 +330,7 @@ function setEditingEnabled(on){
   saveBtn.disabled = !on || (state.creating && !isNameAvailable(state.currentName||''));
 }
 
-/* -------------------- Canvas & Dots -------------------- */
+/* -------------------- Canvas & dots -------------------- */
 const uid = () => (crypto?.randomUUID ? crypto.randomUUID() : 'pt_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8));
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const isCenter=(v)=>Math.abs(v - state.centerY) < 1e-6;
@@ -348,7 +343,7 @@ function setCanvasSize(w,h){
 }
 
 function applyLayout(){
-  /* Keep CSS var synced to the real header height */
+  // keep CSS var synced
   const headerH = document.querySelector('header').offsetHeight || 64;
   document.documentElement.style.setProperty('--hdrH', headerH + 'px');
 
@@ -357,11 +352,18 @@ function applyLayout(){
   const wantVertical    = state.mobile;
   state.rotated = (wantVertical !== imageIsVertical);
 
-  /* Measure the real space inside .stage, not window.innerHeight */
-  const appEl   = document.querySelector('.stage');
-  const availW  = Math.max(1, appEl.clientWidth  - 12);
-  const availH  = Math.max(1, appEl.clientHeight - 12);
-  if (availW <= 1 || availH <= 1) { requestAnimationFrame(applyLayout); return; }
+  let availW, availH;
+  if (state.mobile){
+    // use actual space below the fixed header
+    const stage = document.querySelector('.stage');
+    availW = Math.max(1, stage.clientWidth  - 12);
+    availH = Math.max(1, stage.clientHeight - 12);
+    if (availW <= 1 || availH <= 1) { requestAnimationFrame(applyLayout); return; }
+  } else {
+    // desktop: use viewport below sticky header
+    availW = Math.max(1, window.innerWidth  - 24);
+    availH = Math.max(1, window.innerHeight - headerH - 24);
+  }
 
   const aspect = state.rotated ? (state.naturalH/state.naturalW) : (state.naturalW/state.naturalH);
   let w = availW, h = w/aspect; if (h>availH){ h=availH; w=h*aspect; }
@@ -437,7 +439,7 @@ function addDotAtUV(u,v, idx, side, text){
   view.appendChild(d);
 }
 
-/* Dragging */
+/* Dragging / placing */
 let dragging=null;
 function localXY(e){ const r=view.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; }
 function onDragStart(e){
@@ -482,7 +484,6 @@ function onDragEnd(){
   window.removeEventListener('pointerup', onDragEnd);
 }
 
-/* Placing */
 let placeHandler=null, escHandler=null;
 function enterPlacing(){
   if (state.placing) return;
@@ -511,8 +512,6 @@ function exitPlacing(){
 addBtn.addEventListener('click', ()=>{ if(!editTools.classList.contains('hidden')){ state.placing?exitPlacing():enterPlacing(); }});
 symBtn.addEventListener('click', ()=>{ state.symmetry=!state.symmetry; symBtn.classList.toggle('off', !state.symmetry); symBtn.setAttribute('aria-pressed', state.symmetry?'true':'false'); });
 delBtn.addEventListener('click', ()=>{ const i=state.selectedIndex; if(i==null) return; state.points.splice(i,1); state.selectedIndex=null; delBtn.disabled=true; renderDots(); });
-
-/* Clear selection when clicking empty space */
 view.addEventListener('pointerdown', (e)=>{ if(state.placing) return; if(e.target.classList.contains('dot')) return; state.selectedIndex=null; delBtn.disabled=true; renderDots(); });
 
 /* Numbering on save */
@@ -552,14 +551,13 @@ function ingestTemplateJSON(data){
   renderDots();
 }
 
-/* Layout boot + keep it fresh when sizes change */
+/* Layout boot */
 async function ensureCanvasReady(){
   if (img.complete) { state.naturalW=img.naturalWidth||state.naturalW; state.naturalH=img.naturalHeight||state.naturalH; applyLayout(); }
   else { await new Promise(res=>{ img.onload=()=>{ state.naturalW=img.naturalWidth||state.naturalW; state.naturalH=img.naturalHeight||state.naturalH; applyLayout(); res(); }; }); }
 }
 window.addEventListener('resize', applyLayout);
 window.addEventListener('orientationchange', applyLayout);
-/* If the header’s height changes (e.g., safe-area / font scaling), update layout */
 new ResizeObserver(applyLayout).observe(document.querySelector('header'));
 
 /* Save */
