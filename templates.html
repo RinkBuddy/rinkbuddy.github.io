@@ -567,7 +567,8 @@ function positionDoor(){
 
   // Nudge closer to visible edge/corner
   const edgeInset   = Math.min(halfT * 0.3, 10);
-  const cornerInset = edgeInset;
+  const CORNER_EXTRA_PX = 14; // increase to hug the corner more
+  const cornerInset = Math.min(halfL - halfT, edgeInset + CORNER_EXTRA_PX);
 
   let edge = state.door.edge|0;            // 0 top,1 right,2 bottom,3 left
   let t = clamp(state.door.t,0,1);
@@ -681,4 +682,5 @@ saveBtn.addEventListener('click', async ()=>{ await saveTemplate(); });
 </script>
 </body>
 </html>
+
 
