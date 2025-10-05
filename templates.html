@@ -10,7 +10,6 @@
   html,body{height:100%}
   body{ margin:0; background:#000; color:#e9eef9; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
 
-  /* Header (desktop default) */
   header{
     position:sticky; top:0; z-index:30;
     display:grid; grid-template-columns:auto 1fr auto auto auto; gap:10px; align-items:center;
@@ -39,20 +38,20 @@
   .error{font-size:12px; color:#ff696b; margin-left:8px; display:none}
   .error.show{display:inline}
 
-  /* Icon-only symmetry button */
+  /* Image-only symmetry toggle */
   .iconbtn{ padding:0; border:0; background:transparent; display:inline-grid; place-items:center; cursor:pointer; }
   .iconbtn img{ display:block; width:32px; height:32px; }
   .iconbtn.off img{ filter:grayscale(1) opacity(.45); }
   .iconbtn:focus-visible{ outline:2px solid #1f7aff; outline-offset:2px; }
 
-  /* Stage / viewport */
+  /* Stage */
   .stage{ display:flex; justify-content:center; align-items:center; width:100%; }
   .viewport{
     position:relative; margin:10px auto 0; border:1px solid #191c26; border-radius:14px;
     overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.35); background:#000;
   }
   .viewport.placing{ cursor:crosshair; }
-  canvas#rink{ display:block; width:100%; height:100%; }
+  canvas#rink { display:block; width:100%; height:100%; }
 
   .guide{ position:absolute; background:#00c2ff; opacity:.95; pointer-events:none; }
   .guide.v{ top:0; bottom:0; width:2px; left:50%; transform:translateX(-1px); }
@@ -81,14 +80,14 @@
   .hidden{display:none !important}
   .auth-loading .app{visibility:hidden}
 
-  /* Desktop height helper: let stage fill viewport below header */
+  /* Desktop fill */
   @media (min-width: 901px){
     .stage{ min-height: calc(100vh - var(--hdrH)); }
   }
 
-  /* ---------- MOBILE-ONLY LAYOUT ---------- */
+  /* Mobile */
   @media (max-width: 900px){
-    html, body { height: 100svh; overflow: hidden; }   /* no vertical scroll */
+    html, body { height: 100svh; overflow: hidden; }
     header{
       position:fixed; top:0; left:0; right:0; z-index:40;
       display:flex; gap:10px; align-items:center;
@@ -97,12 +96,7 @@
     }
     header::-webkit-scrollbar{display:none}
     .left,.center,.right{display:inline-flex; gap:10px; align-items:center}
-
-    .app{
-      padding-top: var(--hdrH);
-      height: 100svh;
-      overflow:hidden;
-    }
+    .app{ padding-top: var(--hdrH); height: 100svh; overflow:hidden; }
     .stage{ height: calc(100svh - var(--hdrH)); align-items:center; justify-content:center; }
     .viewport{ margin:6px auto 0; }
   }
@@ -153,7 +147,7 @@
 </div>
 
 <script type="module">
-/* -------------------- Firebase (Auth + Firestore) -------------------- */
+/* -------------------- Firebase -------------------- */
 import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
 import {
   getAuth, GoogleAuthProvider, signInWithPopup,
@@ -163,7 +157,6 @@ import {
   getFirestore, doc, collection, getDocs, getDoc, setDoc
 } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
 
-/* Config */
 const firebaseConfig = {
   apiKey: "AIzaSyCYlPYVyeUMpcr8qgUTifHJiOCayhh7QCQ",
   authDomain: "rink-buddy-6f6ed.firebaseapp.com",
@@ -173,7 +166,6 @@ const firebaseConfig = {
   appId: "1:1096930052063:web:6b97608f1cdd3f5111666a",
   measurementId: "G-7HPRJ6T9LD"
 };
-
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -207,14 +199,12 @@ const img = new Image(); img.src = 'rink1.png';
 const state = {
   naturalW: 600, naturalH: 1200,
   mobile: false,
-  rotated: false,           // true when canvas drawn rotated vs image orientation
+  rotated: false,           // drawing rotated vs image orientation
   centerY: 0.5,
   snapPx: 12,
   symmetry: true,
   points: [],
   selectedIndex: null,
-  labels: new Map(),
-  showLabels: false,
   maskData: null,
   placing: false,
   uid: null,
@@ -222,13 +212,13 @@ const state = {
   currentName: null,
   creating: false,
   dirty: false,
-  // door model: edge 0=top,1=right,2=bottom,3=left; t in [0..1] along that edge
+  // door: edge 0=top,1=right,2=bottom,3=left; t in [0..1] along that edge
   door: { edge: 0, t: 0.5 },
   doorLen: 100,
   doorThick: 20
 };
 
-/* Dirty/Saved handling */
+/* --------- Dirty/Saved handling --------- */
 function setDirty(on){
   state.dirty = !!on;
   if (on){
@@ -242,7 +232,6 @@ function setDirty(on){
   }
 }
 function clearDirtyAfterLoad(){
-  // disabled if editing not enabled; otherwise show Saved
   if (editTools.classList.contains('hidden')) {
     saveBtn.disabled = true;
     saveBtn.classList.remove('saved');
@@ -270,13 +259,12 @@ onAuthStateChanged(auth, async (user) => {
   setEditingEnabled(false);
 });
 
-/* Sign-in button (popup) */
 loginBtn.addEventListener('click', async ()=>{
   const provider = new GoogleAuthProvider();
   await signInWithPopup(auth, provider);
 });
 
-/* -------------------- Firestore helpers -------------------- */
+/* -------------------- Firestore -------------------- */
 function userDocRef(uid){ return doc(db, 'users', uid); }
 function templatesColRef(uid){ return collection(userDocRef(uid), 'templates'); }
 function templateDocRef(uid, name){ return doc(templatesColRef(uid), name); }
@@ -312,21 +300,14 @@ async function saveTemplate(){
   if (!state.uid) return;
   if (!state.currentName || (state.creating && !isNameAvailable(state.currentName))) return;
 
-  computeAdjacencyNumbers();
-  state.showLabels = true;
-
-  const labelMap={};
-  for(const [k,val] of state.labels.entries()){
-    const [id,side]=k.split(':'); (labelMap[id]??={})[side]=val;
-  }
   const docBody = {
     name: state.currentName,
     imagePath:'rink1.png',
     imgW: state.naturalW, imgH: state.naturalH,
     centerY: state.centerY, snapPx: state.snapPx,
-    points: state.points.map(p=>({ id:p.id, u:+p.u.toFixed(6), v:+p.v.toFixed(6), mode:p.mode, labels: labelMap[p.id] || {} })),
+    points: state.points.map(p=>({ id:p.id, u:+p.u.toFixed(6), v:+p.v.toFixed(6), mode:p.mode })),
     door: { edge: state.door.edge, t: +state.door.t.toFixed(6) },
-    updatedAt: new Date().toISOString(), version: 3
+    updatedAt: new Date().toISOString(), version: 4
   };
   await setDoc(templateDocRef(state.uid, state.currentName), docBody);
   await refreshTemplateList();
@@ -348,10 +329,7 @@ function updateNameValidation(){
   const ok = isNameAvailable(name);
   nameError.textContent = name.includes('/') ? 'Name cannot include "/"' : 'Name already used.';
   nameError.classList.toggle('show', !ok);
-  // Only enable Save in create mode if name is available
-  if (state.creating) {
-    saveBtn.disabled = !ok;
-  }
+  if (state.creating) saveBtn.disabled = !ok;
 }
 
 /* Header actions */
@@ -372,7 +350,6 @@ templateSelect.addEventListener('change', async (e)=>{
   if (!name) { setEditingEnabled(false); resetRink(); clearDirtyAfterLoad(); return; }
   await loadTemplateByName(name);
 });
-
 templateName.addEventListener('input', updateNameValidation);
 
 function setCreateMode(on){
@@ -380,10 +357,8 @@ function setCreateMode(on){
   nameRow.classList.toggle('hidden', !on);
   pickerRow.classList.toggle('hidden',  on);
 }
-
 function setEditingEnabled(on){
   editTools.classList.toggle('hidden', !on);
-  // In non-editing mode, save disabled regardless of dirty
   if (!on) { saveBtn.disabled = true; saveBtn.classList.remove('saved'); saveBtn.textContent = 'Save'; }
 }
 
@@ -400,14 +375,13 @@ function setCanvasSize(w,h){
 }
 
 function applyLayout(){
-  // keep CSS var synced
+  // sync header height var
   const headerH = document.querySelector('header').offsetHeight || 64;
   document.documentElement.style.setProperty('--hdrH', headerH + 'px');
 
   state.mobile = window.matchMedia('(max-width: 900px)').matches;
   const imageIsVertical = state.naturalH > state.naturalW;
   const wantVertical    = state.mobile;
-  // rotated means "we rotate canvas drawing relative to source image"
   state.rotated = (wantVertical !== imageIsVertical);
 
   let availW, availH;
@@ -430,10 +404,10 @@ function applyLayout(){
   const d = Math.max(2, Math.round(Math.min(canvas.width, canvas.height) * 0.10));
   document.documentElement.style.setProperty('--dot-size', d + 'px');
 
-  // Door size (length 20% of long side; thickness is 16% of that length => skinny)
+  // DOOR size: 60% of previous (prev L=0.20*long, T=0.16*L). Now L=0.20*long*0.6.
   const longSide = Math.max(canvas.width, canvas.height);
-  state.doorLen   = Math.round(longSide * 0.20);
-  state.doorThick = Math.max(8, Math.round(state.doorLen * 0.16));
+  state.doorLen   = Math.round(longSide * 0.20 * 0.6);
+  state.doorThick = Math.max(8, Math.round(state.doorLen * 0.16)); // thickness scales with L
   doorEl.style.width = state.doorLen + 'px';
   doorEl.style.height = state.doorThick + 'px';
   doorEl.style.fontSize = Math.round(state.doorThick*0.55) + 'px';
@@ -448,7 +422,7 @@ function applyLayout(){
 function drawRink(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   if (state.rotated){
-    // Draw CCW 90° so portrait UV map isn’t mirrored
+    // CCW 90° so portrait UVs are not mirrored
     ctx.save();
     ctx.translate(0, canvas.height);
     ctx.rotate(-Math.PI/2);
@@ -460,15 +434,13 @@ function drawRink(){
 }
 function cacheMask(){ try{ state.maskData = ctx.getImageData(0,0,canvas.width,canvas.height).data; }catch{ state.maskData=null; } }
 
-/* ---- Corrected UV <-> canvas mappings (portrait canonical) ---- */
+/* UV <-> canvas (portrait canonical) */
 function uvToCanvas(u,v){
   const W=canvas.width, H=canvas.height;
   if (state.mobile){
-    // portrait: straightforward
     return { x: u*W, y: v*H };
   } else {
-    // desktop (landscape view): CCW rotation
-    return { x: v*W, y: (1 - u)*H };
+    return { x: v*W, y: (1 - u)*H };  // CCW
   }
 }
 function canvasToUv(x,y){
@@ -477,8 +449,7 @@ function canvasToUv(x,y){
   if (state.mobile){
     return { u: sx, v: sy };
   } else {
-    // inverse of above
-    return { u: 1 - sy, v: sx };
+    return { u: 1 - sy, v: sx };      // inverse
   }
 }
 
@@ -544,7 +515,7 @@ function onDragMove(e){
   const {x,y}=localXY(e);
   let {u,v}=canvasToUv(x,y);
   ({u,v}=clampUvLoose(u,v));
-  const axisPx = state.mobile ? canvas.height : canvas.height; // snapping uses vertical axis size in both orientations
+  const axisPx = canvas.height; // snapping based on vertical axis pixels
   const eps = state.snapPx / axisPx;
   const breakEps = eps * 1.2;
   if (dragging.mode === 'mirrored'){
@@ -579,8 +550,7 @@ function enterPlacing(){
   state.placing=true; view.classList.add('placing'); addBtn.textContent='Click to place… (Esc to cancel)'; delBtn.disabled=true;
   placeHandler=(e)=>{
     const {x,y}=localXY(e); let {u,v}=canvasToUv(x,y); ({u,v}=clampUvLoose(u,v));
-    const axisPx = state.mobile ? canvas.height : canvas.height;
-    const eps=state.snapPx/axisPx; if (Math.abs(v-state.centerY)<=eps) v=state.centerY;
+    const eps=state.snapPx/canvas.height; if (Math.abs(v-state.centerY)<=eps) v=state.centerY;
     if (!state.maskData || centerOnIce(u,v)){
       if (state.symmetry){ const vTop=Math.min(v, 2*state.centerY - v); state.points.push({id:uid(), u, v:vTop, mode:'mirrored'}); }
       else { state.points.push({id:uid(), u, v, mode:'single'}); }
@@ -608,29 +578,6 @@ delBtn.addEventListener('click', ()=>{
 });
 view.addEventListener('pointerdown', (e)=>{ if(state.placing) return; if(e.target.classList.contains('dot')) return; state.selectedIndex=null; delBtn.disabled=true; renderDots(); });
 
-/* Numbering on save */
-function computeAdjacencyNumbers(){
-  const nodes=[];
-  state.points.forEach(pt=>{
-    if (pt.mode==='single'){ nodes.push({id:pt.id, side:'single', u:pt.u, v:pt.v}); }
-    else if (isCenter(pt.v)){ nodes.push({id:pt.id, side:'center', u:pt.u, v:state.centerY}); }
-    else {
-      const vTop=Math.min(pt.v, 2*state.centerY - pt.v), vBot=Math.max(pt.v, 2*state.centerY - pt.v);
-      nodes.push({id:pt.id, side:'top', u:pt.u, v:vTop}); nodes.push({id:pt.id, side:'bottom', u:pt.u, v:vBot});
-    }
-  });
-  if(!nodes.length){ state.labels.clear(); return; }
-  const un=nodes.slice().sort((a,b)=>(a.v-b.v)||(a.u-b.u));
-  const seq=[un.shift()];
-  while(un.length){
-    const last=seq[seq.length-1]; let best=Infinity, idx=0;
-    for(let i=0;i<un.length;i++){ const du=un[i].u-last.u, dv=un[i].v-last.v, d=du*du+dv*dv;
-      if (d<best-1e-9 || (Math.abs(d-best)<1e-9 && ((un[i].v<un[idx].v-1e-9)|| (Math.abs(un[i].v-un[idx].v)<1e-9 && un[i].u<un[idx].u)))){ best=d; idx=i; }
-    } seq.push(un.splice(idx,1)[0]);
-  }
-  state.labels.clear(); for(let i=0;i<seq.length;i++){ state.labels.set(`${seq[i].id}:${seq[i].side}`, i+1); }
-}
-
 /* -------------------- DOOR handle -------------------- */
 function positionDoor(){
   const W=canvas.width, H=canvas.height;
@@ -639,42 +586,38 @@ function positionDoor(){
   let t=clamp(state.door.t,0,1);
   const edge=state.door.edge|0; // 0 top,1 right,2 bottom,3 left
 
-  const cornerZoneTop = halfL/W;     // in t units where center would hit the edge ends
-  const cornerZoneRight = halfL/H;
-
   if (edge===0){ // top
     cx = clamp(t*W, halfL, W-halfL);
     cy = halfT;
     angle = 0;
-    if (cx<=halfL){ angle=-45; cx=halfL; }
-    else if (cx>=W-halfL){ angle=45; cx=W-halfL; }
+    if (cx<=halfL){ angle=45; cx=halfL; }          // top-left SINGLE orientation
+    else if (cx>=W-halfL){ angle=-45; cx=W-halfL; } // top-right
   } else if (edge===2){ // bottom
     cx = clamp(t*W, halfL, W-halfL);
     cy = H-halfT;
     angle = 0;
-    if (cx<=halfL){ angle=45; cx=halfL; }
-    else if (cx>=W-halfL){ angle=-45; cx=W-halfL; }
+    if (cx<=halfL){ angle=-45; cx=halfL; }          // bottom-left
+    else if (cx>=W-halfL){ angle=45; cx=W-halfL; }  // bottom-right
   } else if (edge===1){ // right
     cx = W-halfT;
     cy = clamp(t*H, halfL, H-halfL);
     angle = 90;
-    if (cy<=halfL){ angle=45; cy=halfL; }
-    else if (cy>=H-halfL){ angle=-45; cy=H-halfL; }
+    if (cy<=halfL){ angle=-45; cy=halfL; }          // top-right
+    else if (cy>=H-halfL){ angle=45; cy=H-halfL; }  // bottom-right
   } else { // left
     cx = halfT;
     cy = clamp(t*H, halfL, H-halfL);
     angle = 90;
-    if (cy<=halfL){ angle=-45; cy=halfL; }
-    else if (cy>=H-halfL){ angle=45; cy=H-halfL; }
+    if (cy<=halfL){ angle=45; cy=halfL; }           // top-left
+    else if (cy>=H-halfL){ angle=-45; cy=H-halfL; } // bottom-left
   }
 
-  // Position + rotate
   doorEl.style.left = (cx / W * 100) + '%';
   doorEl.style.top  = (cy / H * 100) + '%';
   doorEl.style.transform = `translate(-50%,-50%) rotate(${angle}deg)`;
 }
 
-// Map a pointer location to nearest edge+t
+// choose nearest edge+t for a pointer position
 function edgeTFromXY(x,y){
   const W=canvas.width, H=canvas.height;
   const dTop=y, dRight=W-x, dBottom=H-y, dLeft=x;
@@ -711,8 +654,7 @@ function onDoorUp(){
 
 /* Reset / ingest */
 function resetRink(){
-  state.points=[]; state.selectedIndex=null; state.labels.clear(); state.showLabels=false; delBtn.disabled=true;
-  // default door at top middle
+  state.points=[]; state.selectedIndex=null; delBtn.disabled=true;
   state.door = { edge: 0, t: 0.5 };
   renderDots(); positionDoor();
 }
@@ -741,8 +683,6 @@ new ResizeObserver(applyLayout).observe(document.querySelector('header'));
 
 /* Save button */
 saveBtn.addEventListener('click', async ()=>{ await saveTemplate(); });
-
-/* Done */
 </script>
 </body>
 </html>
