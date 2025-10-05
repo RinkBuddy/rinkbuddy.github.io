@@ -78,9 +78,12 @@
   .hidden{display:none !important}
   .auth-loading .app{visibility:hidden}
 
+  /* Desktop fills window neatly */
   @media (min-width: 901px){
     .stage{ min-height: calc(100vh - var(--hdrH)); }
   }
+
+  /* Mobile: header scrolls horizontally; no page scroll, full-bleed rink */
   @media (max-width: 900px){
     html, body { height: 100svh; overflow: hidden; }
     header{
@@ -193,7 +196,7 @@ const img = new Image(); img.src = 'rink1.png';
 const state = {
   naturalW: 600, naturalH: 1200,
   mobile: false,
-  rotated: false,
+  rotated: false,           // true when we rotate the image clockwise 90° (desktop)
   centerY: 0.5,
   snapPx: 12,
   symmetry: true,
@@ -206,12 +209,12 @@ const state = {
   currentName: null,
   creating: false,
   dirty: false,
-  door: { edge: 0, t: 0.5 },
+  door: { edge: 0, t: 0.5 }, // current display orientation
   doorLen: 100,
   doorThick: 20
 };
 
-/* Dirty/Saved */
+/* Dirty/Saved UI */
 function setDirty(on){
   state.dirty = !!on;
   if (on){
@@ -256,7 +259,7 @@ loginBtn.addEventListener('click', async ()=>{
   await signInWithPopup(auth, provider);
 });
 
-/* Firestore */
+/* Firestore helpers */
 function userDocRef(uid){ return doc(db, 'users', uid); }
 function templatesColRef(uid){ return collection(userDocRef(uid), 'templates'); }
 function templateDocRef(uid, name){ return doc(templatesColRef(uid), name); }
@@ -273,6 +276,29 @@ async function refreshTemplateList(){
   });
 }
 
+/* Rotation-aware door mapping (portrait canonical <-> display) */
+const CANON_TO_DISPLAY = [3,0,1,2]; // when rotated (clockwise 90°)
+const DISPLAY_TO_CANON = [1,2,3,0];
+
+function doorCanonicalToDisplay(doorCanon){
+  if (!doorCanon) return { edge: 0, t: 0.5 };
+  let { edge:e, t } = doorCanon;
+  if (!state.rotated) return { edge:e, t:t };
+  const dispEdge = CANON_TO_DISPLAY[e|0];
+  const dispT = (e===0 || e===2) ? (1 - t) : t; // invert along former top/bottom
+  return { edge: dispEdge, t: clamp(dispT, 0, 1) };
+}
+
+function doorDisplayToCanonical(doorDisp){
+  if (!doorDisp) return { edge: 0, t: 0.5 };
+  let { edge:e, t } = doorDisp;
+  if (!state.rotated) return { edge:e, t:t };
+  const canonEdge = DISPLAY_TO_CANON[e|0];
+  const canonT = (canonEdge===0 || canonEdge===2) ? (1 - t) : t;
+  return { edge: canonEdge, t: clamp(canonT, 0, 1) };
+}
+
+/* Load/save template */
 async function loadTemplateByName(name){
   const ref = templateDocRef(state.uid, name);
   const docSnap = await getDoc(ref);
@@ -292,14 +318,16 @@ async function saveTemplate(){
   if (!state.uid) return;
   if (!state.currentName || (state.creating && !isNameAvailable(state.currentName))) return;
 
+  const doorCanon = doorDisplayToCanonical(state.door);
+
   const docBody = {
     name: state.currentName,
     imagePath:'rink1.png',
     imgW: state.naturalW, imgH: state.naturalH,
     centerY: state.centerY, snapPx: state.snapPx,
     points: state.points.map(p=>({ id:p.id, u:+p.u.toFixed(6), v:+p.v.toFixed(6), mode:p.mode })),
-    door: { edge: state.door.edge, t: +state.door.t.toFixed(6) },
-    updatedAt: new Date().toISOString(), version: 4
+    door: { edge: doorCanon.edge, t: +doorCanon.t.toFixed(6) },
+    updatedAt: new Date().toISOString(), version: 5
   };
   await setDoc(templateDocRef(state.uid, state.currentName), docBody);
   await refreshTemplateList();
@@ -309,7 +337,7 @@ async function saveTemplate(){
   setDirty(false);
 }
 
-/* Name validation */
+/* Name validation/ui */
 function isNameAvailable(name){
   if (!name) return false;
   if (name.includes('/')) return false;
@@ -371,7 +399,7 @@ function applyLayout(){
   state.mobile = window.matchMedia('(max-width: 900px)').matches;
   const imageIsVertical = state.naturalH > state.naturalW;
   const wantVertical    = state.mobile;
-  state.rotated = (wantVertical !== imageIsVertical);
+  state.rotated = (wantVertical !== imageIsVertical); // desktop => true (rotate CW 90°)
 
   let availW, availH;
   if (state.mobile){
@@ -393,9 +421,9 @@ function applyLayout(){
   const d = Math.max(2, Math.round(Math.min(canvas.width, canvas.height) * 0.10));
   document.documentElement.style.setProperty('--dot-size', d + 'px');
 
-  // DOOR size: 60% of previous
-  const longSide = Math.max(canvas.width, canvas.height);
-  state.doorLen   = Math.round(longSide * 0.20 * 0.6);
+  // DOOR size: 60% of previous (20% of long side -> 12% now)
+  const longSideLen = Math.max(canvas.width, canvas.height);
+  state.doorLen   = Math.round(longSideLen * 0.20 * 0.6);
   state.doorThick = Math.max(8, Math.round(state.doorLen * 0.16));
   doorEl.style.width = state.doorLen + 'px';
   doorEl.style.height = state.doorThick + 'px';
@@ -411,7 +439,7 @@ function applyLayout(){
 function drawRink(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   if (state.rotated){
-    // CCW 90° so portrait UVs are not mirrored
+    // Rotate CW 90° so desktop shows a horizontal rink
     ctx.save();
     ctx.translate(0, canvas.height);
     ctx.rotate(-Math.PI/2);
@@ -423,17 +451,17 @@ function drawRink(){
 }
 function cacheMask(){ try{ state.maskData = ctx.getImageData(0,0,canvas.width,canvas.height).data; }catch{ state.maskData=null; } }
 
-/* UV <-> canvas */
+/* UV <-> canvas (keeps numbering/orientation consistent) */
 function uvToCanvas(u,v){
   const W=canvas.width, H=canvas.height;
-  if (state.mobile) return { x: u*W, y: v*H };
-  return { x: v*W, y: (1 - u)*H };  // CCW mapping for desktop
+  if (state.mobile) return { x: u*W, y: v*H };          // portrait
+  return { x: v*W, y: (1 - u)*H };                      // desktop mapping
 }
 function canvasToUv(x,y){
   const W=canvas.width, H=canvas.height;
   const sx = clamp(x/W,0,1), sy = clamp(y/H,0,1);
   if (state.mobile) return { u: sx, v: sy };
-  return { u: 1 - sy, v: sx };      // inverse
+  return { u: 1 - sy, v: sx };
 }
 
 function clampUvLoose(u,v){ const mu=1/canvas.width, mv=1/canvas.height; return { u:clamp(u,mu,1-mu), v:clamp(v,mv,1-mv) }; }
@@ -560,53 +588,57 @@ delBtn.addEventListener('click', ()=>{
 });
 view.addEventListener('pointerdown', (e)=>{ if(state.placing) return; if(e.target.classList.contains('dot')) return; state.selectedIndex=null; delBtn.disabled=true; renderDots(); });
 
-/* DOOR — unified corner snap, closer to the edge */
+/* DOOR — single snap per corner; scalable corner inset; rotation-aware */
 function positionDoor(){
   const W=canvas.width, H=canvas.height;
   const L=state.doorLen, T=state.doorThick, halfL=L/2, halfT=T/2;
 
-  // Nudge closer to visible edge/corner
-  const edgeInset   = Math.min(halfT * 0.3, 10);
-  const CORNER_EXTRA_PX = 28; // increase to hug the corner more
-  const cornerInset = Math.min(halfL - halfT, edgeInset + CORNER_EXTRA_PX);
+  // Straight-edge spacing stays the same
+  const edgeInset = Math.min(halfT * 0.6, 10);
 
-  let edge = state.door.edge|0;            // 0 top,1 right,2 bottom,3 left
+  // Corner inset as a fraction of the rink long side (≈ 28px on 1400px)
+  const longSide = Math.max(W, H);
+  const CORNER_EXTRA_FRAC = 0.02; // tweak 0.018–0.024 to taste
+  const cornerInset = Math.min(halfL - halfT, edgeInset + longSide * CORNER_EXTRA_FRAC);
+
+  let edge = state.door.edge|0; // 0 top,1 right,2 bottom,3 left (display coords)
   let t = clamp(state.door.t,0,1);
   let cx=0, cy=0, angle=0;
 
   const cornerThresh = (edge===0 || edge===2) ? (halfL/W) : (halfL/H);
 
-  // When near a corner, snap to a single canonical pose per corner
   if (t <= cornerThresh){
-    if (edge===0 || edge===3){              // top-left
+    // Start corner of current edge
+    if (edge===0 || edge===3){ // top-left
       const c = Math.max(halfT, halfL - cornerInset);
       cx = c; cy = c; angle = -45;
-    } else if (edge===1){                    // top-right
+    } else if (edge===1){      // top-right
       const c = Math.max(halfT, halfL - cornerInset);
       cx = W - c; cy = c; angle = 45;
-    } else if (edge===2){                    // bottom-left (start of bottom)
+    } else if (edge===2){      // bottom-left (start of bottom)
       const c = Math.max(halfT, halfL - cornerInset);
       cx = c; cy = H - c; angle = 45;
     }
   } else if (t >= 1 - cornerThresh){
-    if (edge===0){                           // top-right
+    // End corner of current edge
+    if (edge===0){             // top-right
       const c = Math.max(halfT, halfL - cornerInset);
       cx = W - c; cy = c; angle = 45;
-    } else if (edge===1 || edge===2){        // bottom-right
+    } else if (edge===1 || edge===2){ // bottom-right
       const c = Math.max(halfT, halfL - cornerInset);
       cx = W - c; cy = H - c; angle = -45;
-    } else if (edge===3){                    // bottom-left
+    } else if (edge===3){      // bottom-left
       const c = Math.max(halfT, halfL - cornerInset);
       cx = c; cy = H - c; angle = 45;
     }
   } else {
-    // middle of edges (closer to edge)
+    // Along straight edges (closer to edge with edgeInset)
     if (edge===0){ cx = t*W; cy = (halfT - edgeInset); angle = 0; }
     else if (edge===2){ cx = t*W; cy = H - (halfT - edgeInset); angle = 0; }
     else if (edge===1){ cx = W - (halfT - edgeInset); cy = t*H; angle = 90; }
     else { cx = (halfT - edgeInset); cy = t*H; angle = 90; }
 
-    // prevent ends from overhanging rounded corners
+    // Keep ends away from rounded corners
     const minC = Math.max(halfT, halfL - cornerInset);
     if (edge===0 || edge===2) cx = clamp(cx, minC, W - minC);
     else                      cy = clamp(cy, minC, H - minC);
@@ -663,8 +695,10 @@ function ingestTemplateJSON(data){
     mode: p.mode==='single' ? 'single' : 'mirrored'
   })) : [];
   if (data.door && Number.isFinite(data.door.edge) && Number.isFinite(data.door.t)){
-    state.door.edge = clamp(data.door.edge|0,0,3);
-    state.door.t = clamp(+data.door.t,0,1);
+    // Convert saved (portrait canonical) -> current display orientation
+    state.door = doorCanonicalToDisplay({ edge: data.door.edge|0, t: +data.door.t });
+  } else {
+    state.door = { edge: 0, t: 0.5 };
   }
   renderDots(); positionDoor();
 }
@@ -679,10 +713,11 @@ window.addEventListener('orientationchange', applyLayout);
 new ResizeObserver(applyLayout).observe(document.querySelector('header'));
 
 saveBtn.addEventListener('click', async ()=>{ await saveTemplate(); });
+
+/* UI clicks that affect dirty state */
+addBtn.addEventListener('click', ()=>{}); // handled in place mode
+symBtn.addEventListener('click', ()=>{ setDirty(true); });
+templateName.addEventListener('input', ()=>{ if(state.creating) setDirty(true); });
 </script>
 </body>
 </html>
-
-
-
-
