@@ -28,6 +28,8 @@
   .btn.secondary{ background:#22304b; border:1px solid #2b3a59; }
   .btn.danger{ background:var(--danger); }
   .btn:disabled{opacity:.6; cursor:not-allowed}
+  .btn.saved{ background:#2a354f !important; color:#bcd4ff !important; }
+
   select, input[type="text"]{
     background:#121623; color:#fff; border:1px solid #1f2637; border-radius:10px; padding:10px 12px; min-width:260px;
     font-weight:600;
@@ -65,6 +67,17 @@
   .dot.selected{outline:3px solid #00e0b8}
   .viewport.placing .dot{ pointer-events:none; }
 
+  /* Door handle */
+  .door{
+    position:absolute; transform-origin:50% 50%;
+    background:#ffd600; color:#000; border:2px solid #000;
+    border-radius:6px; font-weight:900; letter-spacing:1px;
+    display:flex; align-items:center; justify-content:center;
+    user-select:none; cursor:grab; touch-action:none;
+    box-shadow:0 6px 18px rgba(0,0,0,.35);
+  }
+  .door:active{cursor:grabbing}
+
   .hidden{display:none !important}
   .auth-loading .app{visibility:hidden}
 
@@ -76,8 +89,6 @@
   /* ---------- MOBILE-ONLY LAYOUT ---------- */
   @media (max-width: 900px){
     html, body { height: 100svh; overflow: hidden; }   /* no vertical scroll */
-
-    /* Fixed header that can scroll left-right */
     header{
       position:fixed; top:0; left:0; right:0; z-index:40;
       display:flex; gap:10px; align-items:center;
@@ -87,7 +98,6 @@
     header::-webkit-scrollbar{display:none}
     .left,.center,.right{display:inline-flex; gap:10px; align-items:center}
 
-    /* The app fills everything under the fixed header */
     .app{
       padding-top: var(--hdrH);
       height: 100svh;
@@ -137,6 +147,7 @@
     <div id="view" class="viewport">
       <canvas id="rink"></canvas>
       <div id="guide" class="guide v"></div>
+      <div id="door" class="door">DOOR</div>
     </div>
   </div>
 </div>
@@ -173,6 +184,7 @@ const view = document.getElementById('view');
 const canvas = document.getElementById('rink');
 const ctx = canvas.getContext('2d', { willReadFrequently:true });
 const guide = document.getElementById('guide');
+const doorEl = document.getElementById('door');
 
 const homeBtn = document.getElementById('homeBtn');
 const newTplBtn = document.getElementById('newTplBtn');
@@ -195,7 +207,7 @@ const img = new Image(); img.src = 'rink1.png';
 const state = {
   naturalW: 600, naturalH: 1200,
   mobile: false,
-  rotated: false,
+  rotated: false,           // true when canvas drawn rotated vs image orientation
   centerY: 0.5,
   snapPx: 12,
   symmetry: true,
@@ -208,8 +220,37 @@ const state = {
   uid: null,
   allNames: [],
   currentName: null,
-  creating: false
+  creating: false,
+  dirty: false,
+  // door model: edge 0=top,1=right,2=bottom,3=left; t in [0..1] along that edge
+  door: { edge: 0, t: 0.5 },
+  doorLen: 100,
+  doorThick: 20
 };
+
+/* Dirty/Saved handling */
+function setDirty(on){
+  state.dirty = !!on;
+  if (on){
+    saveBtn.disabled = false;
+    saveBtn.classList.remove('saved');
+    saveBtn.textContent = 'Save';
+  }else{
+    saveBtn.disabled = true;
+    saveBtn.classList.add('saved');
+    saveBtn.textContent = 'Saved';
+  }
+}
+function clearDirtyAfterLoad(){
+  // disabled if editing not enabled; otherwise show Saved
+  if (editTools.classList.contains('hidden')) {
+    saveBtn.disabled = true;
+    saveBtn.classList.remove('saved');
+    saveBtn.textContent = 'Save';
+  } else {
+    setDirty(false);
+  }
+}
 
 /* -------------------- Auth gate -------------------- */
 document.body.classList.add('auth-loading');
@@ -228,6 +269,8 @@ onAuthStateChanged(auth, async (user) => {
   await ensureCanvasReady();
   setEditingEnabled(false);
 });
+
+/* Sign-in button (popup) */
 loginBtn.addEventListener('click', async ()=>{
   const provider = new GoogleAuthProvider();
   await signInWithPopup(auth, provider);
@@ -249,6 +292,7 @@ async function refreshTemplateList(){
     templateSelect.appendChild(opt);
   });
 }
+
 async function loadTemplateByName(name){
   const ref = templateDocRef(state.uid, name);
   const docSnap = await getDoc(ref);
@@ -260,8 +304,10 @@ async function loadTemplateByName(name){
   saveBtn.disabled = false;
   templateSelect.value = name;
   setCreateMode(false);
+  clearDirtyAfterLoad();
   return true;
 }
+
 async function saveTemplate(){
   if (!state.uid) return;
   if (!state.currentName || (state.creating && !isNameAvailable(state.currentName))) return;
@@ -279,13 +325,15 @@ async function saveTemplate(){
     imgW: state.naturalW, imgH: state.naturalH,
     centerY: state.centerY, snapPx: state.snapPx,
     points: state.points.map(p=>({ id:p.id, u:+p.u.toFixed(6), v:+p.v.toFixed(6), mode:p.mode, labels: labelMap[p.id] || {} })),
-    updatedAt: new Date().toISOString(), version: 2
+    door: { edge: state.door.edge, t: +state.door.t.toFixed(6) },
+    updatedAt: new Date().toISOString(), version: 3
   };
   await setDoc(templateDocRef(state.uid, state.currentName), docBody);
   await refreshTemplateList();
   templateSelect.value = state.currentName;
   state.creating = false;
   setEditingEnabled(true);
+  setDirty(false);
 }
 
 /* Name validation */
@@ -300,11 +348,15 @@ function updateNameValidation(){
   const ok = isNameAvailable(name);
   nameError.textContent = name.includes('/') ? 'Name cannot include "/"' : 'Name already used.';
   nameError.classList.toggle('show', !ok);
-  saveBtn.disabled = !ok;
+  // Only enable Save in create mode if name is available
+  if (state.creating) {
+    saveBtn.disabled = !ok;
+  }
 }
 
 /* Header actions */
 homeBtn.addEventListener('click', ()=>{ window.location.href = 'index.html'; });
+
 newTplBtn.addEventListener('click', ()=>{
   setCreateMode(true);
   state.currentName = 'Custom';
@@ -312,12 +364,15 @@ newTplBtn.addEventListener('click', ()=>{
   updateNameValidation();
   resetRink();
   setEditingEnabled(true);
+  clearDirtyAfterLoad();
 });
+
 templateSelect.addEventListener('change', async (e)=>{
   const name = e.target.value;
-  if (!name) { setEditingEnabled(false); resetRink(); return; }
+  if (!name) { setEditingEnabled(false); resetRink(); clearDirtyAfterLoad(); return; }
   await loadTemplateByName(name);
 });
+
 templateName.addEventListener('input', updateNameValidation);
 
 function setCreateMode(on){
@@ -325,9 +380,11 @@ function setCreateMode(on){
   nameRow.classList.toggle('hidden', !on);
   pickerRow.classList.toggle('hidden',  on);
 }
+
 function setEditingEnabled(on){
   editTools.classList.toggle('hidden', !on);
-  saveBtn.disabled = !on || (state.creating && !isNameAvailable(state.currentName||''));
+  // In non-editing mode, save disabled regardless of dirty
+  if (!on) { saveBtn.disabled = true; saveBtn.classList.remove('saved'); saveBtn.textContent = 'Save'; }
 }
 
 /* -------------------- Canvas & dots -------------------- */
@@ -350,17 +407,16 @@ function applyLayout(){
   state.mobile = window.matchMedia('(max-width: 900px)').matches;
   const imageIsVertical = state.naturalH > state.naturalW;
   const wantVertical    = state.mobile;
+  // rotated means "we rotate canvas drawing relative to source image"
   state.rotated = (wantVertical !== imageIsVertical);
 
   let availW, availH;
   if (state.mobile){
-    // use actual space below the fixed header
     const stage = document.querySelector('.stage');
     availW = Math.max(1, stage.clientWidth  - 12);
     availH = Math.max(1, stage.clientHeight - 12);
     if (availW <= 1 || availH <= 1) { requestAnimationFrame(applyLayout); return; }
   } else {
-    // desktop: use viewport below sticky header
     availW = Math.max(1, window.innerWidth  - 24);
     availH = Math.max(1, window.innerHeight - headerH - 24);
   }
@@ -374,17 +430,28 @@ function applyLayout(){
   const d = Math.max(2, Math.round(Math.min(canvas.width, canvas.height) * 0.10));
   document.documentElement.style.setProperty('--dot-size', d + 'px');
 
-  state.points = state.points.map(p => ({...clampUvLoose(p.u,p.v), id:p.id, mode:p.mode}));
+  // Door size (length 20% of long side; thickness is 16% of that length => skinny)
+  const longSide = Math.max(canvas.width, canvas.height);
+  state.doorLen   = Math.round(longSide * 0.20);
+  state.doorThick = Math.max(8, Math.round(state.doorLen * 0.16));
+  doorEl.style.width = state.doorLen + 'px';
+  doorEl.style.height = state.doorThick + 'px';
+  doorEl.style.fontSize = Math.round(state.doorThick*0.55) + 'px';
+  doorEl.style.lineHeight = state.doorThick + 'px';
 
   drawRink();
   cacheMask();
   renderDots();
+  positionDoor();
 }
 
 function drawRink(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   if (state.rotated){
-    ctx.save(); ctx.translate(canvas.width, 0); ctx.rotate(Math.PI/2);
+    // Draw CCW 90° so portrait UV map isn’t mirrored
+    ctx.save();
+    ctx.translate(0, canvas.height);
+    ctx.rotate(-Math.PI/2);
     ctx.drawImage(img, 0, 0, canvas.height, canvas.width);
     ctx.restore();
   } else {
@@ -393,8 +460,27 @@ function drawRink(){
 }
 function cacheMask(){ try{ state.maskData = ctx.getImageData(0,0,canvas.width,canvas.height).data; }catch{ state.maskData=null; } }
 
-function uvToCanvas(u,v){ return state.mobile ? { x:u*canvas.width, y:v*canvas.height } : { x:(1-v)*canvas.width, y:u*canvas.height }; }
-function canvasToUv(x,y){ const sx=clamp(x/canvas.width,0,1), sy=clamp(y/canvas.height,0,1); return state.mobile ? {u:sx, v:sy} : {u:sy, v:1-sx}; }
+/* ---- Corrected UV <-> canvas mappings (portrait canonical) ---- */
+function uvToCanvas(u,v){
+  const W=canvas.width, H=canvas.height;
+  if (state.mobile){
+    // portrait: straightforward
+    return { x: u*W, y: v*H };
+  } else {
+    // desktop (landscape view): CCW rotation
+    return { x: v*W, y: (1 - u)*H };
+  }
+}
+function canvasToUv(x,y){
+  const W=canvas.width, H=canvas.height;
+  const sx = clamp(x/W,0,1), sy = clamp(y/H,0,1);
+  if (state.mobile){
+    return { u: sx, v: sy };
+  } else {
+    // inverse of above
+    return { u: 1 - sy, v: sx };
+  }
+}
 
 function clampUvLoose(u,v){ const mu=1/canvas.width, mv=1/canvas.height; return { u:clamp(u,mu,1-mu), v:clamp(v,mv,1-mv) }; }
 function alphaAtCanvas(x,y){ if(!state.maskData) return 255; const W=canvas.width,H=canvas.height; const xi=Math.max(0,Math.min(W-1,x|0)), yi=Math.max(0,Math.min(H-1,y|0)); return state.maskData[(yi*W+xi)*4+3]; }
@@ -417,7 +503,7 @@ function renderDots(){
     if (pt.mode === 'single'){
       addDotAtUV(pt.u, pt.v, idx, 'single', '');
     } else {
-      if (Math.abs(pt.v - state.centerY) < 1e-6){
+      if (isCenter(pt.v)){
         addDotAtUV(pt.u, state.centerY, idx, 'center', '');
       } else {
         const vTop = Math.min(pt.v, 2*state.centerY - pt.v);
@@ -447,7 +533,7 @@ function onDragStart(e){
   e.preventDefault();
   const idx=+e.currentTarget.dataset.idx; const side=e.currentTarget.dataset.side; const pt=state.points[idx]; if(!pt) return;
   state.selectedIndex=idx; delBtn.disabled=false;
-  dragging={idx, side, mode:pt.mode, last:{u:pt.u, v:pt.v}, wasOnCenter:Math.abs(pt.v-state.centerY)<1e-6};
+  dragging={idx, side, mode:pt.mode, start:{u:pt.u, v:pt.v}, last:{u:pt.u, v:pt.v}, wasOnCenter:isCenter(pt.v)};
   e.currentTarget.setPointerCapture(e.pointerId);
   window.addEventListener('pointermove', onDragMove, {passive:false});
   window.addEventListener('pointerup', onDragEnd, {passive:true});
@@ -458,7 +544,7 @@ function onDragMove(e){
   const {x,y}=localXY(e);
   let {u,v}=canvasToUv(x,y);
   ({u,v}=clampUvLoose(u,v));
-  const axisPx = state.mobile ? canvas.height : canvas.width;
+  const axisPx = state.mobile ? canvas.height : canvas.height; // snapping uses vertical axis size in both orientations
   const eps = state.snapPx / axisPx;
   const breakEps = eps * 1.2;
   if (dragging.mode === 'mirrored'){
@@ -479,9 +565,12 @@ function onDragMove(e){
   renderDots();
 }
 function onDragEnd(){
+  if (!dragging) return;
+  const moved = Math.hypot(dragging.last.u - dragging.start.u, dragging.last.v - dragging.start.v) > 1e-6;
   dragging=null;
   window.removeEventListener('pointermove', onDragMove);
   window.removeEventListener('pointerup', onDragEnd);
+  if (moved) setDirty(true);
 }
 
 let placeHandler=null, escHandler=null;
@@ -490,11 +579,13 @@ function enterPlacing(){
   state.placing=true; view.classList.add('placing'); addBtn.textContent='Click to place… (Esc to cancel)'; delBtn.disabled=true;
   placeHandler=(e)=>{
     const {x,y}=localXY(e); let {u,v}=canvasToUv(x,y); ({u,v}=clampUvLoose(u,v));
-    const axisPx = state.mobile ? canvas.height : canvas.width; const eps=state.snapPx/axisPx; if (Math.abs(v-state.centerY)<=eps) v=state.centerY;
+    const axisPx = state.mobile ? canvas.height : canvas.height;
+    const eps=state.snapPx/axisPx; if (Math.abs(v-state.centerY)<=eps) v=state.centerY;
     if (!state.maskData || centerOnIce(u,v)){
       if (state.symmetry){ const vTop=Math.min(v, 2*state.centerY - v); state.points.push({id:uid(), u, v:vTop, mode:'mirrored'}); }
       else { state.points.push({id:uid(), u, v, mode:'single'}); }
       state.selectedIndex=null;
+      setDirty(true);
     }
     exitPlacing(); renderDots();
   };
@@ -511,7 +602,10 @@ function exitPlacing(){
 }
 addBtn.addEventListener('click', ()=>{ if(!editTools.classList.contains('hidden')){ state.placing?exitPlacing():enterPlacing(); }});
 symBtn.addEventListener('click', ()=>{ state.symmetry=!state.symmetry; symBtn.classList.toggle('off', !state.symmetry); symBtn.setAttribute('aria-pressed', state.symmetry?'true':'false'); });
-delBtn.addEventListener('click', ()=>{ const i=state.selectedIndex; if(i==null) return; state.points.splice(i,1); state.selectedIndex=null; delBtn.disabled=true; renderDots(); });
+delBtn.addEventListener('click', ()=>{
+  const i=state.selectedIndex; if(i==null) return;
+  state.points.splice(i,1); state.selectedIndex=null; delBtn.disabled=true; renderDots(); setDirty(true);
+});
 view.addEventListener('pointerdown', (e)=>{ if(state.placing) return; if(e.target.classList.contains('dot')) return; state.selectedIndex=null; delBtn.disabled=true; renderDots(); });
 
 /* Numbering on save */
@@ -519,7 +613,7 @@ function computeAdjacencyNumbers(){
   const nodes=[];
   state.points.forEach(pt=>{
     if (pt.mode==='single'){ nodes.push({id:pt.id, side:'single', u:pt.u, v:pt.v}); }
-    else if (Math.abs(pt.v - state.centerY) < 1e-6){ nodes.push({id:pt.id, side:'center', u:pt.u, v:state.centerY}); }
+    else if (isCenter(pt.v)){ nodes.push({id:pt.id, side:'center', u:pt.u, v:state.centerY}); }
     else {
       const vTop=Math.min(pt.v, 2*state.centerY - pt.v), vBot=Math.max(pt.v, 2*state.centerY - pt.v);
       nodes.push({id:pt.id, side:'top', u:pt.u, v:vTop}); nodes.push({id:pt.id, side:'bottom', u:pt.u, v:vBot});
@@ -537,9 +631,90 @@ function computeAdjacencyNumbers(){
   state.labels.clear(); for(let i=0;i<seq.length;i++){ state.labels.set(`${seq[i].id}:${seq[i].side}`, i+1); }
 }
 
+/* -------------------- DOOR handle -------------------- */
+function positionDoor(){
+  const W=canvas.width, H=canvas.height;
+  const L=state.doorLen, T=state.doorThick, halfL=L/2, halfT=T/2;
+  let cx=0, cy=0, angle=0;
+  let t=clamp(state.door.t,0,1);
+  const edge=state.door.edge|0; // 0 top,1 right,2 bottom,3 left
+
+  const cornerZoneTop = halfL/W;     // in t units where center would hit the edge ends
+  const cornerZoneRight = halfL/H;
+
+  if (edge===0){ // top
+    cx = clamp(t*W, halfL, W-halfL);
+    cy = halfT;
+    angle = 0;
+    if (cx<=halfL){ angle=-45; cx=halfL; }
+    else if (cx>=W-halfL){ angle=45; cx=W-halfL; }
+  } else if (edge===2){ // bottom
+    cx = clamp(t*W, halfL, W-halfL);
+    cy = H-halfT;
+    angle = 0;
+    if (cx<=halfL){ angle=45; cx=halfL; }
+    else if (cx>=W-halfL){ angle=-45; cx=W-halfL; }
+  } else if (edge===1){ // right
+    cx = W-halfT;
+    cy = clamp(t*H, halfL, H-halfL);
+    angle = 90;
+    if (cy<=halfL){ angle=45; cy=halfL; }
+    else if (cy>=H-halfL){ angle=-45; cy=H-halfL; }
+  } else { // left
+    cx = halfT;
+    cy = clamp(t*H, halfL, H-halfL);
+    angle = 90;
+    if (cy<=halfL){ angle=-45; cy=halfL; }
+    else if (cy>=H-halfL){ angle=45; cy=H-halfL; }
+  }
+
+  // Position + rotate
+  doorEl.style.left = (cx / W * 100) + '%';
+  doorEl.style.top  = (cy / H * 100) + '%';
+  doorEl.style.transform = `translate(-50%,-50%) rotate(${angle}deg)`;
+}
+
+// Map a pointer location to nearest edge+t
+function edgeTFromXY(x,y){
+  const W=canvas.width, H=canvas.height;
+  const dTop=y, dRight=W-x, dBottom=H-y, dLeft=x;
+  const min = Math.min(dTop,dRight,dBottom,dLeft);
+  if (min===dTop)   return { edge:0, t: clamp(x/W,0,1) };
+  if (min===dRight) return { edge:1, t: clamp(y/H,0,1) };
+  if (min===dBottom)return { edge:2, t: clamp(x/W,0,1) };
+  return { edge:3, t: clamp(y/H,0,1) };
+}
+
+let draggingDoor=false;
+doorEl.addEventListener('pointerdown',(e)=>{
+  e.preventDefault();
+  doorEl.setPointerCapture(e.pointerId);
+  draggingDoor=true;
+  window.addEventListener('pointermove', onDoorMove, {passive:false});
+  window.addEventListener('pointerup', onDoorUp, {passive:true});
+});
+function onDoorMove(e){
+  if(!draggingDoor) return;
+  const {x,y}=localXY(e);
+  const et = edgeTFromXY(x,y);
+  state.door.edge = et.edge;
+  state.door.t = et.t;
+  positionDoor();
+}
+function onDoorUp(){
+  if(!draggingDoor) return;
+  draggingDoor=false;
+  window.removeEventListener('pointermove', onDoorMove);
+  window.removeEventListener('pointerup', onDoorUp);
+  setDirty(true);
+}
+
 /* Reset / ingest */
 function resetRink(){
-  state.points=[]; state.selectedIndex=null; state.labels.clear(); state.showLabels=false; delBtn.disabled=true; renderDots();
+  state.points=[]; state.selectedIndex=null; state.labels.clear(); state.showLabels=false; delBtn.disabled=true;
+  // default door at top middle
+  state.door = { edge: 0, t: 0.5 };
+  renderDots(); positionDoor();
 }
 function ingestTemplateJSON(data){
   resetRink();
@@ -548,7 +723,11 @@ function ingestTemplateJSON(data){
     u: +p.u, v: +p.v,
     mode: p.mode==='single' ? 'single' : 'mirrored'
   })) : [];
-  renderDots();
+  if (data.door && Number.isFinite(data.door.edge) && Number.isFinite(data.door.t)){
+    state.door.edge = clamp(data.door.edge|0,0,3);
+    state.door.t = clamp(+data.door.t,0,1);
+  }
+  renderDots(); positionDoor();
 }
 
 /* Layout boot */
@@ -560,8 +739,10 @@ window.addEventListener('resize', applyLayout);
 window.addEventListener('orientationchange', applyLayout);
 new ResizeObserver(applyLayout).observe(document.querySelector('header'));
 
-/* Save */
+/* Save button */
 saveBtn.addEventListener('click', async ()=>{ await saveTemplate(); });
+
+/* Done */
 </script>
 </body>
 </html>
