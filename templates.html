@@ -560,53 +560,61 @@ delBtn.addEventListener('click', ()=>{
 });
 view.addEventListener('pointerdown', (e)=>{ if(state.placing) return; if(e.target.classList.contains('dot')) return; state.selectedIndex=null; delBtn.disabled=true; renderDots(); });
 
-/* DOOR — unified single snap per corner, corrected angles */
+/* DOOR — unified corner snap, closer to the edge */
 function positionDoor(){
   const W=canvas.width, H=canvas.height;
   const L=state.doorLen, T=state.doorThick, halfL=L/2, halfT=T/2;
+
+  // Nudge closer to visible edge/corner
+  const edgeInset   = Math.min(halfT * 0.6, 10);
+  const cornerInset = edgeInset;
 
   let edge = state.door.edge|0;            // 0 top,1 right,2 bottom,3 left
   let t = clamp(state.door.t,0,1);
   let cx=0, cy=0, angle=0;
 
-  // how close to an endpoint counts as "corner"
   const cornerThresh = (edge===0 || edge===2) ? (halfL/W) : (halfL/H);
 
-  // If near start or end of the current edge, snap to that corner with a single canonical orientation
+  // When near a corner, snap to a single canonical pose per corner
   if (t <= cornerThresh){
-    // START corner for this edge
-    if (edge===0 || edge===3){          // top-left corner
-      cx = halfL; cy = halfL; angle = -45;
-    } else if (edge===1){                // right edge start = top-right
-      cx = W-halfL; cy = halfL; angle = 45;
-    } else if (edge===2){                // bottom edge start = bottom-left
-      cx = halfL; cy = H-halfL; angle = 45;
+    if (edge===0 || edge===3){              // top-left
+      const c = Math.max(halfT, halfL - cornerInset);
+      cx = c; cy = c; angle = -45;
+    } else if (edge===1){                    // top-right
+      const c = Math.max(halfT, halfL - cornerInset);
+      cx = W - c; cy = c; angle = 45;
+    } else if (edge===2){                    // bottom-left (start of bottom)
+      const c = Math.max(halfT, halfL - cornerInset);
+      cx = c; cy = H - c; angle = 45;
     }
   } else if (t >= 1 - cornerThresh){
-    // END corner for this edge
-    if (edge===0){                       // top-right
-      cx = W-halfL; cy = halfL; angle = 45;
-    } else if (edge===1 || edge===2){    // right end=bottom-right, bottom end=bottom-right
-      cx = W-halfL; cy = H-halfL; angle = -45;
-    } else if (edge===3){                // left end=bottom-left
-      cx = halfL; cy = H-halfL; angle = 45;
+    if (edge===0){                           // top-right
+      const c = Math.max(halfT, halfL - cornerInset);
+      cx = W - c; cy = c; angle = 45;
+    } else if (edge===1 || edge===2){        // bottom-right
+      const c = Math.max(halfT, halfL - cornerInset);
+      cx = W - c; cy = H - c; angle = -45;
+    } else if (edge===3){                    // bottom-left
+      const c = Math.max(halfT, halfL - cornerInset);
+      cx = c; cy = H - c; angle = 45;
     }
   } else {
-    // Middle of an edge (no corner snap)
-    if (edge===0){ cx = t*W; cy = halfT; angle = 0; }
-    else if (edge===2){ cx = t*W; cy = H-halfT; angle = 0; }
-    else if (edge===1){ cx = W-halfT; cy = t*H; angle = 90; }
-    else { cx = halfT; cy = t*H; angle = 90; }
-    // keep within allowed span so the bar doesn't overrun past the ends visually
-    if (edge===0 || edge===2) cx = clamp(cx, halfL, W-halfL);
-    else cy = clamp(cy, halfL, H-halfL);
+    // middle of edges (closer to edge)
+    if (edge===0){ cx = t*W; cy = (halfT - edgeInset); angle = 0; }
+    else if (edge===2){ cx = t*W; cy = H - (halfT - edgeInset); angle = 0; }
+    else if (edge===1){ cx = W - (halfT - edgeInset); cy = t*H; angle = 90; }
+    else { cx = (halfT - edgeInset); cy = t*H; angle = 90; }
+
+    // prevent ends from overhanging rounded corners
+    const minC = Math.max(halfT, halfL - cornerInset);
+    if (edge===0 || edge===2) cx = clamp(cx, minC, W - minC);
+    else                      cy = clamp(cy, minC, H - minC);
   }
 
   doorEl.style.left = (cx / W * 100) + '%';
   doorEl.style.top  = (cy / H * 100) + '%';
   doorEl.style.transform = `translate(-50%,-50%) rotate(${angle}deg)`;
 }
-// nearest edge+t from pointer
 function edgeTFromXY(x,y){
   const W=canvas.width, H=canvas.height;
   const dTop=y, dRight=W-x, dBottom=H-y, dLeft=x;
