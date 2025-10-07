@@ -2,23 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Rinkbuddy — Check Variance</title>
 <style>
-  :root { --btn:#1f7aff; --muted:#9fb0d0; --dot-size:40px; --blue:#4da3ff; --gray:#c3c7d1; }
+  :root { --btn:#1f7aff; --muted:#9fb0d0; --dot-size:40px; --hdrH:64px; --blue:#4da3ff; --gray:#c3c7d1; }
   *{box-sizing:border-box}
   html,body{height:100%}
   body{ margin:0; background:#000; color:#e9eef9; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
-  a{color:inherit}
 
-  /* Sticky header (frozen pane) */
+  /* Sticky header / frozen pane (same structure as Templates) */
   header{
-    position:sticky; top:0; z-index:20;
+    position:sticky; top:0; z-index:30;
     display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center;
     padding:10px 12px; background:#0b0d13; border-bottom:1px solid #1b1e27;
   }
-  .left,.right{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
-  .center{display:flex; gap:10px; align-items:center; justify-content:center}
+  .left,.center,.right{display:flex; gap:10px; align-items:center}
+  .center{justify-content:center}
+  .right{justify-content:flex-end}
 
   .btn{
     appearance:none; border:0; border-radius:999px; padding:10px 14px;
@@ -39,7 +39,7 @@
     background:#1a2033; color:#9ec5ff; border:1px solid #233154;
   }
 
-  /* Stage (same sizing logic as templates page) */
+  /* Stage / viewport (copied pattern) */
   .stage{ display:flex; justify-content:center; align-items:center; width:100%; }
   .viewport{
     position:relative; margin:10px auto 0; border:1px solid #191c26; border-radius:14px;
@@ -47,7 +47,7 @@
   }
   canvas#rink { display:block; width:100%; height:100%; }
 
-  /* Non-movable dots */
+  /* Dots: read-only taps */
   .dot{
     position:absolute; transform:translate(-50%,-50%); width:var(--dot-size); height:var(--dot-size);
     border-radius:999px; border:2px solid #fff; box-shadow:0 4px 12px rgba(0,0,0,.4);
@@ -57,6 +57,27 @@
   .dot.blue{ background:var(--blue); }
 
   .hint{ color:#9fb0d0; margin:10px 12px 18px }
+
+  /* Desktop fills window neatly */
+  @media (min-width: 901px){
+    .stage{ min-height: calc(100vh - var(--hdrH)); }
+  }
+
+  /* Mobile: header scrolls horizontally; no page scroll; full-bleed rink */
+  @media (max-width: 900px){
+    html, body { height: 100svh; overflow: hidden; }
+    header{
+      position:fixed; top:0; left:0; right:0; z-index:40;
+      display:flex; gap:10px; align-items:center;
+      overflow-x:auto; overflow-y:hidden; white-space:nowrap;
+      -webkit-overflow-scrolling:touch; scrollbar-width:none;
+    }
+    header::-webkit-scrollbar{display:none}
+    .left,.center,.right{display:inline-flex; gap:10px; align-items:center}
+    .app{ padding-top: var(--hdrH); height: 100svh; overflow:hidden; }
+    .stage{ height: calc(100svh - var(--hdrH)); align-items:center; justify-content:center; }
+    .viewport{ margin:6px auto 0; }
+  }
 </style>
 </head>
 <body>
@@ -96,9 +117,11 @@
   </div>
 </header>
 
-<div class="stage">
-  <div id="view" class="viewport">
-    <canvas id="rink"></canvas>
+<div class="app">
+  <div class="stage">
+    <div id="view" class="viewport">
+      <canvas id="rink"></canvas>
+    </div>
   </div>
 </div>
 
@@ -155,15 +178,14 @@ const img = new Image(); img.src = 'rink1.png';
 const state = {
   naturalW: 600, naturalH: 1200,   // portrait source
   mobile: false,
-  rotated: false,                  // whether we rotate 90° to display
+  rotated: false,                  // rotate CW for desktop display
   centerY: 0.5,
   points: [],                      // from template: [{id,u,v,mode}]
-  labelsForSide: new Map(),        // optional numeric labels if present in template
+  labelsForSide: new Map(),        // optional numeric labels from template
   uid: null,
-  allNames: [],                    // list of template doc ids
-  currentName: null,               // selected template name (doc id)
-
-  readings: [],                    // [{key, value, u, v}] key = `${id}:${side}`
+  allNames: [],
+  currentName: null,
+  readings: [],                    // [{key, value, u, v}]
 };
 
 /* -------------------- Auth gate -------------------- */
@@ -175,7 +197,7 @@ onAuthStateChanged(auth, async (user) => {
   }
   state.uid = user.uid;
   await refreshTemplateList();
-  await ensureCanvasReady();      // blank rink on load
+  await ensureCanvasReady();
 });
 
 /* -------------------- Firestore helpers -------------------- */
@@ -201,12 +223,10 @@ async function loadTemplateByName(name){
   if (!docSnap.exists()) return false;
   const data = docSnap.data();
 
-  // Pull canvas/layout hints if present
   state.centerY = typeof data.centerY === 'number' ? data.centerY : 0.5;
   if (typeof data.imgW === 'number') state.naturalW = data.imgW;
   if (typeof data.imgH === 'number') state.naturalH = data.imgH;
 
-  // Points (u,v in canonical portrait space; modes: 'mirrored' | 'single')
   state.points = Array.isArray(data.points) ? data.points.map(p=>({
     id: p.id || `pt_${Math.random().toString(36).slice(2,8)}`,
     u: +p.u, v: +p.v,
@@ -214,7 +234,6 @@ async function loadTemplateByName(name){
     labels: p.labels || null
   })) : [];
 
-  // Optional numeric labels saved by your templates page
   state.labelsForSide.clear();
   for (const p of state.points){
     if (p.labels){
@@ -239,38 +258,52 @@ templateSelect.addEventListener('change', async (e)=>{
   await loadTemplateByName(name);
 });
 
-/* -------------------- Canvas layout (identical logic) -------------------- */
+/* -------------------- Canvas layout (IDENTICAL to Templates) -------------------- */
 function setCanvasSize(w,h){
-  canvas.width  = Math.round(w);
-  canvas.height = Math.round(h);
+  canvas.width  = Math.max(1, Math.round(w));
+  canvas.height = Math.max(1, Math.round(h));
   view.style.width  = canvas.width + 'px';
   view.style.height = canvas.height + 'px';
 }
+
 function applyLayout(){
+  const headerH = document.querySelector('header').offsetHeight || 64;
+  document.documentElement.style.setProperty('--hdrH', headerH + 'px');
+
   state.mobile = window.matchMedia('(max-width: 900px)').matches;
   const imageIsVertical = state.naturalH > state.naturalW;
-  const wantVertical    = state.mobile;          // portrait on mobile, landscape on desktop
-  state.rotated = (wantVertical !== imageIsVertical);
+  const wantVertical    = state.mobile;                 // portrait on mobile, landscape on desktop
+  state.rotated = (wantVertical !== imageIsVertical);   // desktop => true (rotate CW 90°)
 
-  const headerH = document.querySelector('header').offsetHeight;
-  const availW = window.innerWidth - 24;
-  const availH = window.innerHeight - headerH - 24;
+  let availW, availH;
+  if (state.mobile){
+    const stage = document.querySelector('.stage');
+    availW = Math.max(1, stage.clientWidth  - 12);
+    availH = Math.max(1, stage.clientHeight - 12);
+    if (availW <= 1 || availH <= 1) { requestAnimationFrame(applyLayout); return; }
+  } else {
+    availW = Math.max(1, window.innerWidth  - 24);
+    availH = Math.max(1, window.innerHeight - headerH - 24);
+  }
 
   const aspect = state.rotated ? (state.naturalH/state.naturalW) : (state.naturalW/state.naturalH);
   let w = availW, h = w/aspect; if (h>availH){ h=availH; w=h*aspect; }
   setCanvasSize(w,h);
 
-  const d = Math.max(24, Math.round(Math.min(canvas.width, canvas.height) * 0.08));
+  const d = Math.max(2, Math.round(Math.min(canvas.width, canvas.height) * 0.10));
   document.documentElement.style.setProperty('--dot-size', d + 'px');
 
   drawRink();
   renderDots();
 }
+
 function drawRink(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   if (state.rotated){
-    // Rotate 90° so portrait source is displayed horizontally on desktop
-    ctx.save(); ctx.translate(canvas.width, 0); ctx.rotate(Math.PI/2);
+    // EXACT rotation used by Templates page (CW visually)
+    ctx.save();
+    ctx.translate(0, canvas.height);
+    ctx.rotate(-Math.PI/2);
     ctx.drawImage(img, 0, 0, canvas.height, canvas.width);
     ctx.restore();
   } else {
@@ -278,36 +311,33 @@ function drawRink(){
   }
 }
 
-/* Mapping: matches your Templates page exactly */
+/* UV -> canvas mapping (same as Templates) */
 function uvToCanvas(u,v){
-  // Desktop (landscape): swap/flip to match rotation
-  // Mobile (portrait): direct mapping
-  return state.mobile
-    ? { x:u*canvas.width,            y:v*canvas.height }
-    : { x:(1-v)*canvas.width,        y:u*canvas.height };
+  const W=canvas.width, H=canvas.height;
+  if (state.mobile) return { x: u*W, y: v*H };     // portrait
+  return { x: v*W, y: (1 - u)*H };                 // desktop
 }
 
-/* -------------------- Dots (non-movable) -------------------- */
+/* -------------------- Dots (read-only) -------------------- */
 function clearDots(){ view.querySelectorAll('.dot').forEach(n=>n.remove()); }
 
 function renderDots(){
   clearDots();
   if (!state.points.length) return;
 
-  state.points.forEach((pt, idx) => {
+  state.points.forEach((pt) => {
     if (pt.mode === 'single'){
-      addDotAtUV(pt, 'single', idx);
+      addDotAtUV(pt, 'single');
     } else {
-      // mirrored about centerY (in canonical portrait space)
       const vTop = Math.min(pt.v, 2*state.centerY - pt.v);
       const vBot = Math.max(pt.v, 2*state.centerY - pt.v);
-      addDotAtUV({u:pt.u, v:vTop, id:pt.id}, 'top', idx);
-      addDotAtUV({u:pt.u, v:vBot, id:pt.id}, 'bottom', idx);
+      addDotAtUV({u:pt.u, v:vTop, id:pt.id}, 'top');
+      addDotAtUV({u:pt.u, v:vBot, id:pt.id}, 'bottom');
     }
   });
 }
 
-function addDotAtUV(p, side, idx){
+function addDotAtUV(p, side){
   const pos = uvToCanvas(p.u, p.v);
   const d = document.createElement('button');
   d.type = 'button';
@@ -315,21 +345,17 @@ function addDotAtUV(p, side, idx){
   d.style.left = (pos.x/canvas.width*100)+'%';
   d.style.top  = (pos.y/canvas.height*100)+'%';
 
-  // Initial text: use saved numeric label if present, else blank or index
   const key = `${p.id}:${side}`;
   const initialLabel = state.labelsForSide.get(key) || '';
   d.textContent = initialLabel;
 
-  // Data for saving/reading
   d.dataset.key = key;
   d.dataset.id = p.id;
   d.dataset.side = side;
   d.dataset.u = String(p.u);
   d.dataset.v = String(p.v);
 
-  // Tap to query BLE “?”
   d.addEventListener('click', () => requestReadingForDot(d));
-
   view.appendChild(d);
 }
 
@@ -350,8 +376,10 @@ async function ensureCanvasReady(){
   }
 }
 window.addEventListener('resize', applyLayout);
+window.addEventListener('orientationchange', applyLayout);
+new ResizeObserver(applyLayout).observe(document.querySelector('header'));
 
-/* -------------------- BLE (Nordic UART, same “?” flow) -------------------- */
+/* -------------------- BLE (Nordic UART, “?” flow preserved) -------------------- */
 const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // write / writeNR
 const NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // notify
@@ -404,17 +432,15 @@ function handleNotify(ev){
     pendingDot.classList.add('blue');
     pendingDot.textContent = value;
 
-    // record reading
     const key = pendingDot.dataset.key;
     const u = +pendingDot.dataset.u, v = +pendingDot.dataset.v;
     upsertReading(key, value, u, v);
 
     pendingDot = null;
-    saveBtn.disabled = state.readings.length === 0 ? true : false;
+    saveBtn.disabled = state.readings.length === 0;
   }
 }
 
-// tolerant numeric extraction; replace with your alphabet-digit scheme if desired
 function parseIncomingValue(t){
   const m = t.match(/-?\d+(\.\d+)?/);
   return m ? m[0] : t;
@@ -473,7 +499,10 @@ async function saveVariance(){
 connectBtn.addEventListener('click', connectBle);
 saveBtn.addEventListener('click', saveVariance);
 
-/* Prevent image ghost-drag (if ever added) */
+/* Minor helpers */
+function userDocRef(uid){ return doc(db, 'users', uid); }
+
+/* Prevent ghost-drag */
 document.addEventListener('dragstart', e => { if (e.target.tagName==='IMG') e.preventDefault(); }, {capture:true});
 </script>
 </body>
