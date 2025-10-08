@@ -45,6 +45,7 @@
   }
   canvas#rink { display:block; width:100%; height:100%; }
 
+  /* DOTS */
   .dot{
     position:absolute; transform:translate(-50%,-50%); width:var(--dot-size); height:var(--dot-size);
     border-radius:999px; border:2px solid #fff; box-shadow:0 4px 12px rgba(0,0,0,.4);
@@ -53,14 +54,21 @@
   .dot.gray{ background:var(--gray); }
   .dot.blue{ background:var(--blue); }
 
+  /* DOOR — same look as templates, but not draggable here */
+  .door{
+    position:absolute; transform-origin:50% 50%;
+    background:#ffd600; color:#000; border:2px solid #000;
+    border-radius:6px; font-weight:900; letter-spacing:1px;
+    display:flex; align-items:center; justify-content:center;
+    user-select:none; pointer-events:none;           /* <- non-movable here */
+    box-shadow:0 6px 18px rgba(0,0,0,.35);
+  }
+
   .hint{ color:#9fb0d0; margin:10px 12px 18px }
 
-  /* Desktop fills window neatly */
   @media (min-width: 901px){
     .stage{ min-height: calc(100vh - var(--hdrH)); }
   }
-
-  /* Mobile: header scrolls horizontally; no page scroll; full-bleed rink */
   @media (max-width: 900px){
     html, body { height: 100svh; overflow: hidden; }
     header{
@@ -118,6 +126,7 @@
   <div class="stage">
     <div id="view" class="viewport">
       <canvas id="rink"></canvas>
+      <div id="door" class="door" style="display:none">DOOR</div>
     </div>
   </div>
 </div>
@@ -134,12 +143,11 @@ $dbg.addEventListener('click', ()=> $dbg.remove());
 window.addEventListener('error', e=> dbg(`<b>ERROR:</b> ${e.message}`));
 window.addEventListener('unhandledrejection', e=> dbg(`<b>Promise:</b> ${e.reason}`));
 
-dbg('script start');
-
 /* ---------------- DOM refs ---------------- */
 const view   = document.getElementById('view');
 const canvas = document.getElementById('rink');
 const ctx    = canvas.getContext('2d', { willReadFrequently:true });
+const doorEl = document.getElementById('door');
 
 const homeBtn = document.getElementById('homeBtn');
 const templateSelect = document.getElementById('templateSelect');
@@ -152,60 +160,27 @@ const connectBtn = document.getElementById('connectBtn');
 const saveBtn = document.getElementById('saveBtn');
 const bleStatus = document.getElementById('bleStatus');
 
-/* ---------------- Immediate button wiring (works even if anything else fails) ---------------- */
+/* ---------------- Immediate button wiring ---------------- */
 homeBtn.addEventListener('click', ()=>{ location.href='index.html'; });
-dbg('home button wired');
-
-const enc=new TextEncoder(), dec=new TextDecoder();
-const NUS_SERVICE_UUID='6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-const NUS_RX_CHAR_UUID='6e400002-b5a3-f393-e0a9-e50e24dcca9e';
-const NUS_TX_CHAR_UUID='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
-let ble={device:null,server:null,service:null,rx:null,tx:null,connected:false}, inFlight=false, pendingDot=null, askTimer=null;
-function setBleUI(connected){
-  bleStatus.textContent = connected ? 'connected' : 'disconnected';
-  bleStatus.style.background = connected ? '#13301f' : '#1a2033';
-  bleStatus.style.color = connected ? '#95ffb5' : '#9ec5ff';
-}
-connectBtn.addEventListener('click', async ()=>{
-  try{
-    const device = await navigator.bluetooth.requestDevice({filters:[{name:'BUDDY'}],optionalServices:[NUS_SERVICE_UUID]});
-    device.addEventListener('gattserverdisconnected', ()=>{ ble.connected=false; setBleUI(false); });
-    const server = await device.gatt.connect();
-    const service= await server.getPrimaryService(NUS_SERVICE_UUID);
-    const tx=await service.getCharacteristic(NUS_TX_CHAR_UUID);
-    await tx.startNotifications();
-    tx.addEventListener('characteristicvaluechanged', handleNotify);
-    const rx=await service.getCharacteristic(NUS_RX_CHAR_UUID);
-    ble={device,server,service,rx,tx,connected:true}; setBleUI(true);
-    dbg('BLE connected');
-  }catch(e){ dbg(`<b>BLE error:</b> ${e.message||e}`); alert('BLE connect failed (Chrome + HTTPS required).'); }
-});
-function handleNotify(e){
-  const text=dec.decode(e.target.value).trim();
-  const value=(text.match(/-?\d+(\.\d+)?/)||[])[0]||text;
-  inFlight=false; clearTimeout(askTimer);
-  if (pendingDot){
-    pendingDot.classList.remove('gray'); pendingDot.classList.add('blue');
-    pendingDot.textContent=value;
-    const key=pendingDot.dataset.key, u=+pendingDot.dataset.u, v=+pendingDot.dataset.v;
-    const i=state.readings.findIndex(r=>r.key===key); const rec={key,value,u,v};
-    if(i>=0) state.readings[i]=rec; else state.readings.push(rec);
-    pendingDot=null; saveBtn.disabled = state.readings.length===0;
-  }
-}
-async function sendRaw(s){ if(ble.connected&&ble.rx){ try{ await ble.rx.writeValueWithoutResponse(enc.encode(s)); }catch(e){ dbg(`<b>BLE send:</b> ${e}`); } } }
-async function requestReadingForDot(dot){ if(!ble.connected){ alert('Connect first.'); return; } if(inFlight) return; pendingDot=dot; inFlight=true; await sendRaw('?'); clearTimeout(askTimer); askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingDot=null; alert('No response within 2s.'); } },2000); }
 
 /* ---------------- Canvas + layout (mirrors Templates) ---------------- */
 const img = new Image(); img.src='rink1.png';
-const state={ naturalW:600, naturalH:1200, mobile:false, rotated:false, centerY:0.5, points:[], labelsForSide:new Map(), uid:null, allNames:[], currentName:null, readings:[] };
+const state={
+  naturalW:600, naturalH:1200, mobile:false, rotated:false, centerY:0.5,
+  points:[], labelsForSide:new Map(), uid:null, allNames:[], currentName:null, readings:[],
+  doorCanon:{ edge:0, t:0.5 },    // saved in template (portrait canonical)
+  doorDisp: { edge:0, t:0.5 },    // computed for current display orientation
+  doorLen:100, doorThick:20
+};
 
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 function setCanvasSize(w,h){
   canvas.width=Math.max(1,Math.round(w));
   canvas.height=Math.max(1,Math.round(h));
   view.style.width=canvas.width+'px';
   view.style.height=canvas.height+'px';
 }
+
 function applyLayout(){
   const headerH=document.querySelector('header').offsetHeight||64;
   document.documentElement.style.setProperty('--hdrH', headerH+'px');
@@ -213,7 +188,7 @@ function applyLayout(){
   state.mobile=window.matchMedia('(max-width: 900px)').matches;
   const imageIsVertical=state.naturalH>state.naturalW;
   const wantVertical=state.mobile;
-  state.rotated=(wantVertical!==imageIsVertical);
+  state.rotated=(wantVertical!==imageIsVertical); // desktop rotates
 
   let availW, availH;
   if(state.mobile){
@@ -232,8 +207,20 @@ function applyLayout(){
   const d=Math.max(2, Math.round(Math.min(canvas.width, canvas.height)*0.10));
   document.documentElement.style.setProperty('--dot-size', d+'px');
 
-  drawRink(); renderDots();
+  // Door size (same scale as templates: 20% long side * 0.6)
+  const longSide = Math.max(canvas.width, canvas.height);
+  state.doorLen   = Math.round(longSide * 0.20 * 0.6);
+  state.doorThick = Math.max(8, Math.round(state.doorLen * 0.16));
+  doorEl.style.width = state.doorLen + 'px';
+  doorEl.style.height = state.doorThick + 'px';
+  doorEl.style.fontSize = Math.round(state.doorThick*0.55) + 'px';
+  doorEl.style.lineHeight = state.doorThick + 'px';
+
+  // Recompute display door from canonical for current rotation
+  state.doorDisp = doorCanonicalToDisplay(state.doorCanon);
+  drawRink(); renderDots(); positionDoor();
 }
+
 function drawRink(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   if(state.rotated){
@@ -243,10 +230,14 @@ function drawRink(){
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   }
 }
+
+/* UV -> canvas mapping (matches Templates) */
 function uvToCanvas(u,v){
   const W=canvas.width, H=canvas.height;
   return state.mobile ? {x:u*W, y:v*H} : {x:v*W, y:(1-u)*H};
 }
+
+/* Dots (read-only) */
 function clearDots(){ view.querySelectorAll('.dot').forEach(n=>n.remove()); }
 function renderDots(){
   clearDots();
@@ -273,21 +264,125 @@ function addDot(p,side){
   view.appendChild(d);
 }
 
+/* ---- DOOR math (same orientation mapping as your templates) ---- */
+const CANON_TO_DISPLAY = [3,0,1,2]; // when rotated (CW visual)
+function doorCanonicalToDisplay(doorCanon){
+  if (!doorCanon) return { edge:0, t:0.5 };
+  let { edge:e, t } = doorCanon;
+  if (!state.rotated) return { edge:e|0, t:clamp(t,0,1) };
+  const dispEdge = CANON_TO_DISPLAY[e|0];
+  const dispT = (e===0 || e===2) ? (1 - t) : t; // invert along top/bottom when rotated
+  return { edge: dispEdge, t: clamp(dispT, 0, 1) };
+}
+
+function positionDoor(){
+  if (doorEl.style.display === 'none') return;
+  const W=canvas.width, H=canvas.height;
+  const L=state.doorLen, T=state.doorThick, halfL=L/2, halfT=T/2;
+
+  // straight-edge inset
+  const edgeInset = Math.min(halfT * 0.6, 10);
+  // corner inset fraction (same feel as templates)
+  const longSide = Math.max(W,H);
+  const CORNER_EXTRA_FRAC = 0.02;
+  const cornerInset = Math.min(halfL - halfT, edgeInset + longSide * CORNER_EXTRA_FRAC);
+
+  let {edge, t} = state.doorDisp;
+  edge = edge|0; t = clamp(t,0,1);
+
+  let cx=0, cy=0, angle=0;
+  const cornerThresh = (edge===0 || edge===2) ? (halfL/W) : (halfL/H);
+
+  if (t <= cornerThresh){
+    // start corner of current edge
+    if (edge===0 || edge===3){ // top-left
+      const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=c; angle=-45;
+    } else if (edge===1){      // top-right
+      const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=c; angle=45;
+    } else if (edge===2){      // bottom-left
+      const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=H-c; angle=45;
+    }
+  } else if (t >= 1 - cornerThresh){
+    // end corner of current edge
+    if (edge===0){             // top-right
+      const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=c; angle=45;
+    } else if (edge===1 || edge===2){ // bottom-right
+      const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=H-c; angle=-45;
+    } else if (edge===3){      // bottom-left
+      const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=H-c; angle=45;
+    }
+  } else {
+    // along straight edges
+    if (edge===0){ cx = t*W; cy = (halfT - edgeInset); angle = 0; }
+    else if (edge===2){ cx = t*W; cy = H - (halfT - edgeInset); angle = 0; }
+    else if (edge===1){ cx = W - (halfT - edgeInset); cy = t*H; angle = 90; }
+    else { cx = (halfT - edgeInset); cy = t*H; angle = 90; }
+
+    const minC = Math.max(halfT, halfL - cornerInset);
+    if (edge===0 || edge===2) cx = clamp(cx, minC, W - minC);
+    else                      cy = clamp(cy, minC, H - minC);
+  }
+
+  doorEl.style.left = (cx / W * 100) + '%';
+  doorEl.style.top  = (cy / H * 100) + '%';
+  doorEl.style.transform = `translate(-50%,-50%) rotate(${angle}deg)`;
+}
+
 /* draw ASAP (even before image/auth) */
 applyLayout();
-dbg('applyLayout(boot) done');
 
 if (img.complete && img.naturalWidth>0){
-  state.naturalW=img.naturalWidth; state.naturalH=img.naturalHeight; applyLayout(); dbg('image already loaded');
+  state.naturalW=img.naturalWidth; state.naturalH=img.naturalHeight; applyLayout();
 }else{
-  img.onload = ()=>{ state.naturalW=img.naturalWidth||state.naturalW; state.naturalH=img.naturalHeight||state.naturalH; applyLayout(); dbg('image onload'); };
-  img.onerror = ()=>{ dbg('<b>rink1.png failed to load</b> — using defaults'); applyLayout(); };
+  img.onload = ()=>{ state.naturalW=img.naturalWidth||state.naturalW; state.naturalH=img.naturalHeight||state.naturalH; applyLayout(); };
+  img.onerror = ()=>{ applyLayout(); };
 }
 window.addEventListener('resize', applyLayout);
 window.addEventListener('orientationchange', applyLayout);
 new ResizeObserver(()=>applyLayout()).observe(document.querySelector('header'));
 
-/* ---------------- Dynamically import Firebase (won’t crash page if CDN blocked) ---------------- */
+/* ---------------- BLE (Nordic UART “?” flow) ---------------- */
+const enc=new TextEncoder(), dec=new TextDecoder();
+const NUS_SERVICE_UUID='6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_RX_CHAR_UUID='6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_TX_CHAR_UUID='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+let ble={device:null,server:null,service:null,rx:null,tx:null,connected:false}, inFlight=false, pendingDot=null, askTimer=null;
+
+function setBleUI(connected){
+  bleStatus.textContent = connected ? 'connected' : 'disconnected';
+  bleStatus.style.background = connected ? '#13301f' : '#1a2033';
+  bleStatus.style.color = connected ? '#95ffb5' : '#9ec5ff';
+}
+connectBtn.addEventListener('click', async ()=>{
+  try{
+    const device = await navigator.bluetooth.requestDevice({filters:[{name:'BUDDY'}],optionalServices:[NUS_SERVICE_UUID]});
+    device.addEventListener('gattserverdisconnected', ()=>{ ble.connected=false; setBleUI(false); });
+    const server = await device.gatt.connect();
+    const service= await server.getPrimaryService(NUS_SERVICE_UUID);
+    const tx=await service.getCharacteristic(NUS_TX_CHAR_UUID);
+    await tx.startNotifications();
+    tx.addEventListener('characteristicvaluechanged', handleNotify);
+    const rx=await service.getCharacteristic(NUS_RX_CHAR_UUID);
+    ble={device,server,service,rx,tx,connected:true}; setBleUI(true);
+  }catch(e){ dbg(`<b>BLE error:</b> ${e.message||e}`); alert('BLE connect failed (Chrome + HTTPS required).'); }
+});
+function handleNotify(e){
+  const text=dec.decode(e.target.value).trim();
+  const value=(text.match(/-?\d+(\.\d+)?/)||[])[0]||text;
+  inFlight=false; clearTimeout(askTimer);
+  if (pendingDot){
+    pendingDot.classList.remove('gray'); pendingDot.classList.add('blue');
+    pendingDot.textContent=value;
+    const key=pendingDot.dataset.key, u=+pendingDot.dataset.u, v=+pendingDot.dataset.v;
+    const i=state.readings.findIndex(r=>r.key===key); const rec={key,value,u,v};
+    if(i>=0) state.readings[i]=rec; else state.readings.push(rec);
+    pendingDot=null; saveBtn.disabled = state.readings.length===0;
+  }
+}
+async function sendRaw(s){ if(ble.connected&&ble.rx){ try{ await ble.rx.writeValueWithoutResponse(enc.encode(s)); }catch(e){ dbg(`<b>BLE send:</b> ${e}`); } } }
+async function requestReadingForDot(dot){ if(!ble.connected){ alert('Connect first.'); return; } if(inFlight) return; pendingDot=dot; inFlight=true; await sendRaw('?'); clearTimeout(askTimer); askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingDot=null; alert('No response within 2s.'); } },2000); }
+
+/* ---------------- Firebase (dynamic import; uses persisted login) ---------------- */
 let auth=null, db=null;
 (async ()=>{
   try{
@@ -310,12 +405,9 @@ let auth=null, db=null;
     db   = fsMod.getFirestore(app);
     try { await authMod.setPersistence(auth, authMod.browserLocalPersistence); } catch {}
 
-    dbg('firebase loaded');
-
     authMod.onAuthStateChanged(auth, async (user)=>{
-      if (!user){ dbg('auth: not signed in (persisted session missing)'); return; }
+      if (!user){ dbg('auth: not signed in'); return; }
       state.uid = user.uid;
-      dbg('auth: signed in');
 
       // load template names
       try{
@@ -325,45 +417,56 @@ let auth=null, db=null;
         state.allNames = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
         templateSelect.innerHTML = `<option value="">Select a template…</option>`;
         state.allNames.forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=n; templateSelect.appendChild(o); });
-        dbg(`templates: ${state.allNames.length} loaded`);
       }catch(e){ dbg(`<b>templates error:</b> ${e.message||e}`); }
     });
 
-    // picker change
+    // template picker
     templateSelect.addEventListener('change', async e=>{
       if (!db || !state.uid) { alert('Not signed in.'); e.target.value=''; return; }
       const name=e.target.value;
       state.readings=[]; saveBtn.disabled=true;
-      if (!name){ clearDots(); drawRink(); return; }
+      if (!name){ clearDots(); doorEl.style.display='none'; drawRink(); return; }
       try{
         const docRef = fsMod.doc(fsMod.collection(fsMod.doc(db,'users',state.uid),'templates'), name);
         const docSnap= await fsMod.getDoc(docRef);
         if(!docSnap.exists()) return;
         const data=docSnap.data();
+
+        // canvas hints
         state.centerY = typeof data.centerY==='number'?data.centerY:0.5;
         if(typeof data.imgW==='number') state.naturalW=data.imgW;
         if(typeof data.imgH==='number') state.naturalH=data.imgH;
+
+        // points
         state.points=(data.points||[]).map(p=>({ id:p.id||`pt_${Math.random().toString(36).slice(2,8)}`, u:+p.u, v:+p.v, mode:p.mode==='single'?'single':'mirrored', labels:p.labels||null }));
         state.labelsForSide.clear();
         for(const p of state.points){ if(p.labels){ for(const side of Object.keys(p.labels)){ state.labelsForSide.set(`${p.id}:${side}`, String(p.labels[side])); } } }
+
+        // door (portrait canonical in Firestore) -> current display
+        if (data.door && Number.isFinite(data.door.edge) && Number.isFinite(data.door.t)){
+          state.doorCanon = { edge: data.door.edge|0, t: +data.door.t };
+          doorEl.style.display = 'flex';
+        } else {
+          state.doorCanon = { edge:0, t:0.5 };
+          doorEl.style.display = 'none';
+        }
+
         state.currentName=name;
-        applyLayout();
-        dbg(`loaded template: ${name} with ${state.points.length} base points`);
+        applyLayout();    // redraw + reposition door for current orientation
       }catch(err){ dbg(`<b>load template error:</b> ${err.message||err}`); }
     });
 
-    // save handler (needs db)
+    // save
     saveBtn.addEventListener('click', async ()=>{
       if (!db || !state.uid){ alert('Sign in required.'); return; }
       if (!state.currentName){ alert('Pick a template first.'); return; }
       if (!state.readings.length){ alert('Take at least one reading.'); return; }
-      const fsMod2 = fsMod; // alias
       try{
-        await fsMod2.addDoc(fsMod2.collection(fsMod2.doc(db,'users',state.uid),'variances'), {
+        await fsMod.addDoc(fsMod.collection(fsMod.doc(db,'users',state.uid),'variances'), {
           templateName: state.currentName,
           rinkName: selRink.value, padName: selPad.value, employeeName: selEmp.value,
           readings: state.readings, centerY: state.centerY,
-          imgW: state.naturalW, imgH: state.naturalH, createdAt: fsMod2.serverTimestamp()
+          imgW: state.naturalW, imgH: state.naturalH, createdAt: fsMod.serverTimestamp()
         });
         alert('Variance saved.');
       }catch(e){ dbg(`<b>save error:</b> ${e.message||e}`); alert('Save failed. See debug.'); }
@@ -371,9 +474,15 @@ let auth=null, db=null;
 
   } catch (err){
     dbg(`<b>firebase import failed:</b> ${err.message||err}`);
-    // Page remains usable for BLE + Home, rink still renders.
+    // Page still usable for rink + BLE + Home.
   }
 })();
+
+/* ---------------- BLE helpers scoped above ---------------- */
+async function requestReadingForDot(dot){ if(!ble.connected){ alert('Connect first.'); return; } if(inFlight) return; pendingDot=dot; inFlight=true; await sendRaw('?'); clearTimeout(askTimer); askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingDot=null; alert('No response within 2s.'); } },2000); }
+async function sendRaw(s){ if(ble.connected&&ble.rx){ try{ await ble.rx.writeValueWithoutResponse(enc.encode(s)); }catch(e){ dbg(`<b>BLE send:</b> ${e}`); } } }
+function handleNotify(e){ /* defined earlier in BLE block; kept for scope */ }
+
 </script>
 </body>
 </html>
