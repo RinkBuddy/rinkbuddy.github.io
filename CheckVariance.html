@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Rinkbuddy — Check Variance</title>
 <style>
-  :root { --btn:#1f7aff; --muted:#9fb0d0; --dot-size:40px; --hdrH:64px; --blue:#4da3ff; --gray:#c3c7d1; }
+  :root { --btn:#1f7aff; --muted:#9fb0d0; --dot-size:40px; --hdrH:64px; --blue:#4da3ff; --gray:#141824; }
   *{box-sizing:border-box}
   html,body{height:100%}
   body{ margin:0; background:#000; color:#e9eef9; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
@@ -60,7 +60,7 @@
     background:#ffd600; color:#000; border:2px solid #000;
     border-radius:6px; font-weight:900; letter-spacing:1px;
     display:flex; align-items:center; justify-content:center;
-    user-select:none; pointer-events:none;           /* <- non-movable here */
+    user-select:none; pointer-events:none; /* read-only here */
     box-shadow:0 6px 18px rgba(0,0,0,.35);
   }
 
@@ -83,12 +83,6 @@
     .stage{ height: calc(100svh - var(--hdrH)); align-items:center; justify-content:center; }
     .viewport{ margin:6px auto 0; }
   }
-
-  /* tiny debug overlay (click to hide) */
-  #dbg{position:fixed;bottom:8px;left:8px;z-index:9999;background:rgba(10,16,28,.8);
-       color:#9ec5ff;border:1px solid #233154;border-radius:8px;padding:6px 8px;
-       font:12px ui-monospace,Consolas,monospace;max-width:45vw;max-height:40vh;overflow:auto}
-  #dbg b{color:#cde1ff}
 </style>
 </head>
 <body>
@@ -133,16 +127,7 @@
 
 <p class="hint">Tap a dot to send “?”. When the device replies, the dot turns blue and shows the value.</p>
 
-<div id="dbg" title="click to hide"></div>
-
 <script>
-/* ---------------- Minimal inline debug ---------------- */
-const $dbg = document.getElementById('dbg');
-const dbg = (m)=>{ $dbg.innerHTML += `${new Date().toLocaleTimeString()} — ${m}<br>`; $dbg.scrollTop=$dbg.scrollHeight; };
-$dbg.addEventListener('click', ()=> $dbg.remove());
-window.addEventListener('error', e=> dbg(`<b>ERROR:</b> ${e.message}`));
-window.addEventListener('unhandledrejection', e=> dbg(`<b>Promise:</b> ${e.reason}`));
-
 /* ---------------- DOM refs ---------------- */
 const view   = document.getElementById('view');
 const canvas = document.getElementById('rink');
@@ -167,7 +152,7 @@ homeBtn.addEventListener('click', ()=>{ location.href='index.html'; });
 const img = new Image(); img.src='rink1.png';
 const state={
   naturalW:600, naturalH:1200, mobile:false, rotated:false, centerY:0.5,
-  points:[], labelsForSide:new Map(), uid:null, allNames:[], currentName:null, readings:[],
+  points:[], uid:null, allNames:[], currentName:null, readings:[],
   doorCanon:{ edge:0, t:0.5 },    // saved in template (portrait canonical)
   doorDisp: { edge:0, t:0.5 },    // computed for current display orientation
   doorLen:100, doorThick:20
@@ -257,8 +242,11 @@ function addDot(p,side){
   d.type='button'; d.className='dot gray';
   d.style.left=(pos.x/canvas.width*100)+'%';
   d.style.top =(pos.y/canvas.height*100)+'%';
+
+  // No preloaded labels anymore; start empty
+  d.textContent = '';
+
   const key=`${p.id}:${side}`;
-  d.textContent = state.labelsForSide.get(key) || '';
   Object.assign(d.dataset, { key, id:p.id, side, u:String(p.u), v:String(p.v) });
   d.addEventListener('click', ()=>requestReadingForDot(d));
   view.appendChild(d);
@@ -280,9 +268,7 @@ function positionDoor(){
   const W=canvas.width, H=canvas.height;
   const L=state.doorLen, T=state.doorThick, halfL=L/2, halfT=T/2;
 
-  // straight-edge inset
   const edgeInset = Math.min(halfT * 0.6, 10);
-  // corner inset fraction (same feel as templates)
   const longSide = Math.max(W,H);
   const CORNER_EXTRA_FRAC = 0.02;
   const cornerInset = Math.min(halfL - halfT, edgeInset + longSide * CORNER_EXTRA_FRAC);
@@ -294,25 +280,14 @@ function positionDoor(){
   const cornerThresh = (edge===0 || edge===2) ? (halfL/W) : (halfL/H);
 
   if (t <= cornerThresh){
-    // start corner of current edge
-    if (edge===0 || edge===3){ // top-left
-      const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=c; angle=-45;
-    } else if (edge===1){      // top-right
-      const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=c; angle=45;
-    } else if (edge===2){      // bottom-left
-      const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=H-c; angle=45;
-    }
+    if (edge===0 || edge===3){ const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=c; angle=-45; }
+    else if (edge===1){        const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=c; angle=45; }
+    else if (edge===2){        const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=H-c; angle=45; }
   } else if (t >= 1 - cornerThresh){
-    // end corner of current edge
-    if (edge===0){             // top-right
-      const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=c; angle=45;
-    } else if (edge===1 || edge===2){ // bottom-right
-      const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=H-c; angle=-45;
-    } else if (edge===3){      // bottom-left
-      const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=H-c; angle=45;
-    }
+    if (edge===0){             const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=c; angle=45; }
+    else if (edge===1 || edge===2){ const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=H-c; angle=-45; }
+    else if (edge===3){        const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=H-c; angle=45; }
   } else {
-    // along straight edges
     if (edge===0){ cx = t*W; cy = (halfT - edgeInset); angle = 0; }
     else if (edge===2){ cx = t*W; cy = H - (halfT - edgeInset); angle = 0; }
     else if (edge===1){ cx = W - (halfT - edgeInset); cy = t*H; angle = 90; }
@@ -364,7 +339,7 @@ connectBtn.addEventListener('click', async ()=>{
     tx.addEventListener('characteristicvaluechanged', handleNotify);
     const rx=await service.getCharacteristic(NUS_RX_CHAR_UUID);
     ble={device,server,service,rx,tx,connected:true}; setBleUI(true);
-  }catch(e){ dbg(`<b>BLE error:</b> ${e.message||e}`); alert('BLE connect failed (Chrome + HTTPS required).'); }
+  }catch(e){ console.error(e); alert('BLE connect failed (Chrome + HTTPS required).'); }
 });
 function handleNotify(e){
   const text=dec.decode(e.target.value).trim();
@@ -379,7 +354,7 @@ function handleNotify(e){
     pendingDot=null; saveBtn.disabled = state.readings.length===0;
   }
 }
-async function sendRaw(s){ if(ble.connected&&ble.rx){ try{ await ble.rx.writeValueWithoutResponse(enc.encode(s)); }catch(e){ dbg(`<b>BLE send:</b> ${e}`); } } }
+async function sendRaw(s){ if(ble.connected&&ble.rx){ try{ await ble.rx.writeValueWithoutResponse(enc.encode(s)); }catch(e){ console.error(e); } } }
 async function requestReadingForDot(dot){ if(!ble.connected){ alert('Connect first.'); return; } if(inFlight) return; pendingDot=dot; inFlight=true; await sendRaw('?'); clearTimeout(askTimer); askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingDot=null; alert('No response within 2s.'); } },2000); }
 
 /* ---------------- Firebase (dynamic import; uses persisted login) ---------------- */
@@ -406,7 +381,7 @@ let auth=null, db=null;
     try { await authMod.setPersistence(auth, authMod.browserLocalPersistence); } catch {}
 
     authMod.onAuthStateChanged(auth, async (user)=>{
-      if (!user){ dbg('auth: not signed in'); return; }
+      if (!user) return;
       state.uid = user.uid;
 
       // load template names
@@ -417,7 +392,7 @@ let auth=null, db=null;
         state.allNames = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
         templateSelect.innerHTML = `<option value="">Select a template…</option>`;
         state.allNames.forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=n; templateSelect.appendChild(o); });
-      }catch(e){ dbg(`<b>templates error:</b> ${e.message||e}`); }
+      }catch(e){ console.error('template list', e); }
     });
 
     // template picker
@@ -437,10 +412,11 @@ let auth=null, db=null;
         if(typeof data.imgW==='number') state.naturalW=data.imgW;
         if(typeof data.imgH==='number') state.naturalH=data.imgH;
 
-        // points
-        state.points=(data.points||[]).map(p=>({ id:p.id||`pt_${Math.random().toString(36).slice(2,8)}`, u:+p.u, v:+p.v, mode:p.mode==='single'?'single':'mirrored', labels:p.labels||null }));
-        state.labelsForSide.clear();
-        for(const p of state.points){ if(p.labels){ for(const side of Object.keys(p.labels)){ state.labelsForSide.set(`${p.id}:${side}`, String(p.labels[side])); } } }
+        // points (ignore labels; start empty text)
+        state.points=(data.points||[]).map(p=>({
+          id:p.id||`pt_${Math.random().toString(36).slice(2,8)}`,
+          u:+p.u, v:+p.v, mode:p.mode==='single'?'single':'mirrored'
+        }));
 
         // door (portrait canonical in Firestore) -> current display
         if (data.door && Number.isFinite(data.door.edge) && Number.isFinite(data.door.t)){
@@ -453,10 +429,10 @@ let auth=null, db=null;
 
         state.currentName=name;
         applyLayout();    // redraw + reposition door for current orientation
-      }catch(err){ dbg(`<b>load template error:</b> ${err.message||err}`); }
+      }catch(err){ console.error('load template', err); }
     });
 
-    // save
+    // save variance
     saveBtn.addEventListener('click', async ()=>{
       if (!db || !state.uid){ alert('Sign in required.'); return; }
       if (!state.currentName){ alert('Pick a template first.'); return; }
@@ -469,20 +445,14 @@ let auth=null, db=null;
           imgW: state.naturalW, imgH: state.naturalH, createdAt: fsMod.serverTimestamp()
         });
         alert('Variance saved.');
-      }catch(e){ dbg(`<b>save error:</b> ${e.message||e}`); alert('Save failed. See debug.'); }
+      }catch(e){ console.error('save variance', e); alert('Save failed.'); }
     });
 
   } catch (err){
-    dbg(`<b>firebase import failed:</b> ${err.message||err}`);
+    console.error('firebase import', err);
     // Page still usable for rink + BLE + Home.
   }
 })();
-
-/* ---------------- BLE helpers scoped above ---------------- */
-async function requestReadingForDot(dot){ if(!ble.connected){ alert('Connect first.'); return; } if(inFlight) return; pendingDot=dot; inFlight=true; await sendRaw('?'); clearTimeout(askTimer); askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingDot=null; alert('No response within 2s.'); } },2000); }
-async function sendRaw(s){ if(ble.connected&&ble.rx){ try{ await ble.rx.writeValueWithoutResponse(enc.encode(s)); }catch(e){ dbg(`<b>BLE send:</b> ${e}`); } } }
-function handleNotify(e){ /* defined earlier in BLE block; kept for scope */ }
-
 </script>
 </body>
 </html>
