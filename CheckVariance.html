@@ -10,7 +10,6 @@
   html,body{height:100%}
   body{ margin:0; background:#000; color:#e9eef9; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
 
-  /* Sticky header / frozen pane */
   header{
     position:sticky; top:0; z-index:30;
     display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center;
@@ -39,7 +38,6 @@
     background:#1a2033; color:#9ec5ff; border:1px solid #233154;
   }
 
-  /* Stage / viewport (same pattern as Templates) */
   .stage{ display:flex; justify-content:center; align-items:center; width:100%; }
   .viewport{
     position:relative; margin:10px auto 0; border:1px solid #191c26; border-radius:14px;
@@ -47,7 +45,6 @@
   }
   canvas#rink { display:block; width:100%; height:100%; }
 
-  /* Dots: read-only taps */
   .dot{
     position:absolute; transform:translate(-50%,-50%); width:var(--dot-size); height:var(--dot-size);
     border-radius:999px; border:2px solid #fff; box-shadow:0 4px 12px rgba(0,0,0,.4);
@@ -58,12 +55,9 @@
 
   .hint{ color:#9fb0d0; margin:10px 12px 18px }
 
-  /* Desktop fills window neatly */
   @media (min-width: 901px){
     .stage{ min-height: calc(100vh - var(--hdrH)); }
   }
-
-  /* Mobile: header scrolls horizontally; no page scroll; full-bleed rink */
   @media (max-width: 900px){
     html, body { height: 100svh; overflow: hidden; }
     header{
@@ -85,19 +79,13 @@
   <div class="left">
     <button id="homeBtn" class="btn secondary">Home</button>
     <label>Rink Name:
-      <select id="selRink">
-        <option>Scotiabank Arena</option>
-      </select>
+      <select id="selRink"><option>Scotiabank Arena</option></select>
     </label>
     <label>Pad Name:
-      <select id="selPad">
-        <option>North</option>
-      </select>
+      <select id="selPad"><option>North</option></select>
     </label>
     <label>Employee Name:
-      <select id="selEmp">
-        <option>Bob</option>
-      </select>
+      <select id="selEmp"><option>Bob</option></select>
     </label>
   </div>
 
@@ -130,15 +118,10 @@
 <script type="module">
 /* -------------------- Firebase (Auth + Firestore) -------------------- */
 import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
-import {
-  getAuth, GoogleAuthProvider, signInWithPopup,
-  onAuthStateChanged, setPersistence, browserLocalPersistence
-} from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
-import {
-  getFirestore, doc, collection, getDocs, getDoc, addDoc, serverTimestamp
-} from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
+import { getAuth, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
+import { getFirestore, doc, collection, getDocs, getDoc, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
 
-/* your project */
+/* Config */
 const firebaseConfig = {
   apiKey: "AIzaSyCYlPYVyeUMpcr8qgUTifHJiOCayhh7QCQ",
   authDomain: "rink-buddy-6f6ed.firebaseapp.com",
@@ -148,13 +131,10 @@ const firebaseConfig = {
   appId: "1:1096930052063:web:6b97608f1cdd3f5111666a",
   measurementId: "G-7HPRJ6T9LD"
 };
-
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
-
-/* persist across pages/tabs */
-await setPersistence(auth, browserLocalPersistence);
+try { await setPersistence(auth, browserLocalPersistence); } catch { /* already persisted */ }
 
 /* -------------------- DOM refs -------------------- */
 const view = document.getElementById('view');
@@ -172,43 +152,37 @@ const connectBtn = document.getElementById('connectBtn');
 const saveBtn = document.getElementById('saveBtn');
 const bleStatus = document.getElementById('bleStatus');
 
-/* -------------------- App state (mirrors Templates page behavior) -------------------- */
-const img = new Image();
-img.src = 'rink1.png';
+/* -------------------- App state -------------------- */
+const img = new Image(); img.src = 'rink1.png';
+let initialCanvasReady = false;  /* <<< declared BEFORE use in auth callback */
 
 const state = {
-  naturalW: 600, naturalH: 1200,   // portrait source
+  naturalW: 600, naturalH: 1200,
   mobile: false,
-  rotated: false,                  // rotate CW for desktop display
+  rotated: false,
   centerY: 0.5,
-  points: [],                      // from template: [{id,u,v,mode}]
-  labelsForSide: new Map(),        // optional numeric labels from template
+  points: [],
+  labelsForSide: new Map(),
   uid: null,
   allNames: [],
   currentName: null,
-  readings: [],                    // [{key, value, u, v}]
+  readings: [],
 };
 
-/* -------------------- Auth gate -------------------- */
+/* -------------------- Boot canvas FIRST (independent of auth) -------------------- */
+ensureCanvasReady();
+
+/* -------------------- Auth: rely on persistent login from index.html -------------------- */
 onAuthStateChanged(auth, async (user) => {
-  // Always render the rink so the canvas isn’t tiny while auth is pending or blocked.
+  // Make sure canvas is sized even if auth fires immediately.
   if (!initialCanvasReady) await ensureCanvasReady();
 
   if (!user) {
-    // Try to sign in, but even if it fails we keep the rink visible.
-    try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (e) {
-      console.warn('Sign-in skipped/blocked:', e?.message || e);
-      return; // Not signed in -> we can’t load templates, but UI stays usable.
-    }
+    // Not signed in (rare here), keep UI usable; templates won’t load.
+    return;
   }
-
-  state.uid = auth.currentUser?.uid || null;
-  if (state.uid) {
-    await refreshTemplateList();
-  }
+  state.uid = user.uid;
+  await refreshTemplateList();
 });
 
 /* -------------------- Firestore helpers -------------------- */
@@ -269,9 +243,7 @@ templateSelect.addEventListener('change', async (e)=>{
   await loadTemplateByName(name);
 });
 
-/* -------------------- Canvas layout (IDENTICAL to Templates) -------------------- */
-let initialCanvasReady = false;
-
+/* -------------------- Canvas layout (same as Templates) -------------------- */
 function setCanvasSize(w,h){
   canvas.width  = Math.max(1, Math.round(w));
   canvas.height = Math.max(1, Math.round(h));
@@ -285,8 +257,8 @@ function applyLayout(){
 
   state.mobile = window.matchMedia('(max-width: 900px)').matches;
   const imageIsVertical = state.naturalH > state.naturalW;
-  const wantVertical    = state.mobile;                 // portrait on mobile, landscape on desktop
-  state.rotated = (wantVertical !== imageIsVertical);   // desktop => true (rotate CW 90°)
+  const wantVertical    = state.mobile;
+  state.rotated = (wantVertical !== imageIsVertical);
 
   let availW, availH;
   if (state.mobile){
@@ -313,7 +285,6 @@ function applyLayout(){
 function drawRink(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   if (state.rotated){
-    // EXACT rotation used by Templates page (CW visually)
     ctx.save();
     ctx.translate(0, canvas.height);
     ctx.rotate(-Math.PI/2);
@@ -324,20 +295,19 @@ function drawRink(){
   }
 }
 
-/* UV -> canvas mapping (same as Templates) */
+/* Mapping identical to Templates */
 function uvToCanvas(u,v){
   const W=canvas.width, H=canvas.height;
-  if (state.mobile) return { x: u*W, y: v*H };     // portrait
-  return { x: v*W, y: (1 - u)*H };                 // desktop
+  if (state.mobile) return { x:u*W, y:v*H };
+  return { x:v*W, y:(1-u)*H };
 }
 
-/* -------------------- Dots (read-only) -------------------- */
+/* Dots (read-only) */
 function clearDots(){ view.querySelectorAll('.dot').forEach(n=>n.remove()); }
 
 function renderDots(){
   clearDots();
   if (!state.points.length) return;
-
   state.points.forEach((pt) => {
     if (pt.mode === 'single'){
       addDotAtUV(pt, 'single');
@@ -374,36 +344,23 @@ function addDotAtUV(p, side){
 
 function renderAll(){ drawRink(); renderDots(); }
 
-/* Boot canvas once image is ready (AND fall back on error) */
+/* Image boot (with fallback) */
 async function ensureCanvasReady(){
-  // If already sized once, just re-apply layout
   if (initialCanvasReady) { applyLayout(); return; }
-
-  if (img.complete && img.naturalWidth > 0) {
-    state.naturalW = img.naturalWidth;
-    state.naturalH = img.naturalHeight;
-    applyLayout();
-    initialCanvasReady = true;
-  } else {
-    await new Promise(res=>{
-      img.onload = ()=>{ 
-        state.naturalW = img.naturalWidth || state.naturalW;
-        state.naturalH = img.naturalHeight || state.naturalH;
-        applyLayout(); initialCanvasReady = true; res(); 
-      };
-      img.onerror = ()=>{ 
-        console.warn('rink1.png failed to load; using default dimensions.');
-        applyLayout(); initialCanvasReady = true; res(); 
-      };
-    });
+  if (img.complete && img.naturalWidth > 0){
+    state.naturalW = img.naturalWidth; state.naturalH = img.naturalHeight;
+    applyLayout(); initialCanvasReady = true; return;
   }
+  await new Promise(res=>{
+    img.onload = ()=>{ state.naturalW=img.naturalWidth||state.naturalW; state.naturalH=img.naturalHeight||state.naturalH; applyLayout(); initialCanvasReady=true; res(); };
+    img.onerror = ()=>{ applyLayout(); initialCanvasReady=true; res(); };
+  });
 }
-
 window.addEventListener('resize', applyLayout);
 window.addEventListener('orientationchange', applyLayout);
 new ResizeObserver(applyLayout).observe(document.querySelector('header'));
 
-/* -------------------- BLE (Nordic UART, “?” flow preserved) -------------------- */
+/* -------------------- BLE (Nordic UART) -------------------- */
 const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
@@ -503,7 +460,7 @@ async function saveVariance(){
     rinkName: selRink.value,
     padName: selPad.value,
     employeeName: selEmp.value,
-    readings: state.readings,              // [{key, value, u, v}]
+    readings: state.readings,
     centerY: state.centerY,
     createdAt: serverTimestamp(),
     imgW: state.naturalW, imgH: state.naturalH
@@ -523,14 +480,11 @@ async function saveVariance(){
 connectBtn.addEventListener('click', connectBle);
 saveBtn.addEventListener('click', saveVariance);
 
-/* Minor helpers */
+/* Helper */
 function userDocRef(uid){ return doc(db, 'users', uid); }
 
 /* Prevent ghost-drag */
 document.addEventListener('dragstart', e => { if (e.target.tagName==='IMG') e.preventDefault(); }, {capture:true});
-
-/* Render asap, even before auth settles */
-ensureCanvasReady();
 </script>
 </body>
 </html>
