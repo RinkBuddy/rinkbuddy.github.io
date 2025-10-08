@@ -35,8 +35,10 @@
 
   .pill{
     display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px;
-    background:#1a2033; color:#9ec5ff; border:1px solid #233154;
+    border:1px solid #233154;
   }
+  .pill.connected{ background:#13301f; color:#95ffb5; border-color:#1d4d31; }
+  .pill.disconnected{ background:#2a0e12; color:#ff9aa6; border-color:#5a1d28; }
 
   .stage{ display:flex; justify-content:center; align-items:center; width:100%; }
   .viewport{
@@ -54,15 +56,33 @@
   .dot.gray{ background:var(--gray); }
   .dot.blue{ background:var(--blue); }
 
-  /* DOOR — same look as templates, but not draggable here */
+  /* DOOR — same look as templates, read-only here */
   .door{
     position:absolute; transform-origin:50% 50%;
     background:#ffd600; color:#000; border:2px solid #000;
     border-radius:6px; font-weight:900; letter-spacing:1px;
     display:flex; align-items:center; justify-content:center;
-    user-select:none; pointer-events:none; /* read-only here */
+    user-select:none; pointer-events:none;
     box-shadow:0 6px 18px rgba(0,0,0,.35);
   }
+
+  /* Popup overlay */
+  .overlay{ position:fixed; inset:0; display:none; place-items:center; z-index:60; }
+  .overlay.show{ display:grid; }
+  .overlay::before{
+    content:""; position:absolute; inset:0; background:rgba(0,0,0,.55);
+  }
+  .modal{
+    position:relative; z-index:1;
+    background:rgba(77,163,255,.16);
+    border:1px solid rgba(77,163,255,.45);
+    border-radius:16px; padding:20px; min-width:280px; max-width:92vw;
+    box-shadow:0 20px 70px rgba(0,0,0,.5); backdrop-filter: blur(6px);
+  }
+  .modal h2{ margin:0 0 12px; font-size:14px; color:#bcd4ff; font-weight:700; letter-spacing:.4px; }
+  .big-value{ font-size:56px; line-height:1; font-weight:900; text-align:center; color:#e9f1ff; margin:8px 6px 16px; }
+  .actions{ display:flex; gap:10px; justify-content:flex-end }
+  .actions .btn.secondary{ background:#2a354f; border-color:#3a4a6e }
 
   .hint{ color:#9fb0d0; margin:10px 12px 18px }
 
@@ -110,7 +130,7 @@
   </div>
 
   <div class="right">
-    <span id="bleStatus" class="pill">disconnected</span>
+    <span id="bleStatus" class="pill disconnected">Disconnected</span>
     <button id="connectBtn" class="btn">Connect</button>
     <button id="saveBtn" class="btn secondary" disabled>Save</button>
   </div>
@@ -125,7 +145,19 @@
   </div>
 </div>
 
-<p class="hint">Tap a dot to send “?”. When the device replies, the dot turns blue and shows the value.</p>
+<!-- Popup overlay -->
+<div id="overlay" class="overlay" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ovTitle">
+    <h2 id="ovTitle">Current value</h2>
+    <div id="bigValue" class="big-value">—</div>
+    <div class="actions">
+      <button id="overrideBtn" class="btn">Override</button>
+      <button id="closeBtn" class="btn secondary">Close</button>
+    </div>
+  </div>
+</div>
+
+<p class="hint">Tap a gray dot to record; tap a blue dot to view/override.</p>
 
 <script>
 /* ---------------- DOM refs ---------------- */
@@ -145,6 +177,12 @@ const connectBtn = document.getElementById('connectBtn');
 const saveBtn = document.getElementById('saveBtn');
 const bleStatus = document.getElementById('bleStatus');
 
+/* Overlay refs */
+const overlay = document.getElementById('overlay');
+const bigValue = document.getElementById('bigValue');
+const overrideBtn = document.getElementById('overrideBtn');
+const closeBtn = document.getElementById('closeBtn');
+
 /* ---------------- Immediate button wiring ---------------- */
 homeBtn.addEventListener('click', ()=>{ location.href='index.html'; });
 
@@ -152,9 +190,10 @@ homeBtn.addEventListener('click', ()=>{ location.href='index.html'; });
 const img = new Image(); img.src='rink1.png';
 const state={
   naturalW:600, naturalH:1200, mobile:false, rotated:false, centerY:0.5,
-  points:[], uid:null, allNames:[], currentName:null, readings:[],
-  doorCanon:{ edge:0, t:0.5 },    // saved in template (portrait canonical)
-  doorDisp: { edge:0, t:0.5 },    // computed for current display orientation
+  points:[], uid:null, allNames:[], currentName:null,
+  readings:[],                      // [{key, value, u, v}]
+  doorCanon:{ edge:0, t:0.5 },      // saved in template (portrait canonical)
+  doorDisp: { edge:0, t:0.5 },      // computed for current display orientation
   doorLen:100, doorThick:20
 };
 
@@ -165,7 +204,6 @@ function setCanvasSize(w,h){
   view.style.width=canvas.width+'px';
   view.style.height=canvas.height+'px';
 }
-
 function applyLayout(){
   const headerH=document.querySelector('header').offsetHeight||64;
   document.documentElement.style.setProperty('--hdrH', headerH+'px');
@@ -205,7 +243,6 @@ function applyLayout(){
   state.doorDisp = doorCanonicalToDisplay(state.doorCanon);
   drawRink(); renderDots(); positionDoor();
 }
-
 function drawRink(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   if(state.rotated){
@@ -215,14 +252,10 @@ function drawRink(){
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   }
 }
-
-/* UV -> canvas mapping (matches Templates) */
 function uvToCanvas(u,v){
   const W=canvas.width, H=canvas.height;
   return state.mobile ? {x:u*W, y:v*H} : {x:v*W, y:(1-u)*H};
 }
-
-/* Dots (read-only) */
 function clearDots(){ view.querySelectorAll('.dot').forEach(n=>n.remove()); }
 function renderDots(){
   clearDots();
@@ -242,27 +275,22 @@ function addDot(p,side){
   d.type='button'; d.className='dot gray';
   d.style.left=(pos.x/canvas.width*100)+'%';
   d.style.top =(pos.y/canvas.height*100)+'%';
-
-  // No preloaded labels anymore; start empty
-  d.textContent = '';
-
   const key=`${p.id}:${side}`;
   Object.assign(d.dataset, { key, id:p.id, side, u:String(p.u), v:String(p.v) });
-  d.addEventListener('click', ()=>requestReadingForDot(d));
+  d.addEventListener('click', ()=>handleDotPress(d));
   view.appendChild(d);
 }
 
-/* ---- DOOR math (same orientation mapping as your templates) ---- */
-const CANON_TO_DISPLAY = [3,0,1,2]; // when rotated (CW visual)
+/* ---- DOOR mapping (portrait canonical -> current display) ---- */
+const CANON_TO_DISPLAY = [3,0,1,2]; // when rotated CW visually
 function doorCanonicalToDisplay(doorCanon){
   if (!doorCanon) return { edge:0, t:0.5 };
   let { edge:e, t } = doorCanon;
   if (!state.rotated) return { edge:e|0, t:clamp(t,0,1) };
   const dispEdge = CANON_TO_DISPLAY[e|0];
-  const dispT = (e===0 || e===2) ? (1 - t) : t; // invert along top/bottom when rotated
+  const dispT = (e===0 || e===2) ? (1 - t) : t;
   return { edge: dispEdge, t: clamp(dispT, 0, 1) };
 }
-
 function positionDoor(){
   if (doorEl.style.display === 'none') return;
   const W=canvas.width, H=canvas.height;
@@ -305,7 +333,6 @@ function positionDoor(){
 
 /* draw ASAP (even before image/auth) */
 applyLayout();
-
 if (img.complete && img.naturalWidth>0){
   state.naturalW=img.naturalWidth; state.naturalH=img.naturalHeight; applyLayout();
 }else{
@@ -324,38 +351,93 @@ const NUS_TX_CHAR_UUID='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 let ble={device:null,server:null,service:null,rx:null,tx:null,connected:false}, inFlight=false, pendingDot=null, askTimer=null;
 
 function setBleUI(connected){
-  bleStatus.textContent = connected ? 'connected' : 'disconnected';
-  bleStatus.style.background = connected ? '#13301f' : '#1a2033';
-  bleStatus.style.color = connected ? '#95ffb5' : '#9ec5ff';
+  ble.connected = !!connected;
+  bleStatus.textContent = connected ? 'Connected' : 'Disconnected';
+  bleStatus.classList.toggle('connected', connected);
+  bleStatus.classList.toggle('disconnected', !connected);
 }
 connectBtn.addEventListener('click', async ()=>{
   try{
     const device = await navigator.bluetooth.requestDevice({filters:[{name:'BUDDY'}],optionalServices:[NUS_SERVICE_UUID]});
-    device.addEventListener('gattserverdisconnected', ()=>{ ble.connected=false; setBleUI(false); });
+    device.addEventListener('gattserverdisconnected', ()=>{
+      setBleUI(false); // drop-off -> red “Disconnected”
+    });
     const server = await device.gatt.connect();
     const service= await server.getPrimaryService(NUS_SERVICE_UUID);
     const tx=await service.getCharacteristic(NUS_TX_CHAR_UUID);
     await tx.startNotifications();
     tx.addEventListener('characteristicvaluechanged', handleNotify);
     const rx=await service.getCharacteristic(NUS_RX_CHAR_UUID);
-    ble={device,server,service,rx,tx,connected:true}; setBleUI(true);
+    ble={device,server,service,rx,tx,connected:true};
+    setBleUI(true);
   }catch(e){ console.error(e); alert('BLE connect failed (Chrome + HTTPS required).'); }
 });
 function handleNotify(e){
   const text=dec.decode(e.target.value).trim();
-  const value=(text.match(/-?\d+(\.\d+)?/)||[])[0]||text;
+  const value=(text.match(/-?\d+(\.\d+)?/)||[])[0]||text; // tolerant parse
   inFlight=false; clearTimeout(askTimer);
   if (pendingDot){
-    pendingDot.classList.remove('gray'); pendingDot.classList.add('blue');
-    pendingDot.textContent=value;
+    // record/update reading for that dot
     const key=pendingDot.dataset.key, u=+pendingDot.dataset.u, v=+pendingDot.dataset.v;
     const i=state.readings.findIndex(r=>r.key===key); const rec={key,value,u,v};
     if(i>=0) state.readings[i]=rec; else state.readings.push(rec);
-    pendingDot=null; saveBtn.disabled = state.readings.length===0;
+    saveBtn.disabled = state.readings.length===0;
+    // if popup is open for this dot, update the big readout
+    if (overlay.dataset.key === key) {
+      bigValue.textContent = value;
+    }
+    pendingDot=null;
   }
 }
 async function sendRaw(s){ if(ble.connected&&ble.rx){ try{ await ble.rx.writeValueWithoutResponse(enc.encode(s)); }catch(e){ console.error(e); } } }
-async function requestReadingForDot(dot){ if(!ble.connected){ alert('Connect first.'); return; } if(inFlight) return; pendingDot=dot; inFlight=true; await sendRaw('?'); clearTimeout(askTimer); askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingDot=null; alert('No response within 2s.'); } },2000); }
+
+/* Dot interactions */
+function handleDotPress(dot){
+  if (dot.classList.contains('blue')){
+    // Already has a reading – show popup with current stored value
+    const key = dot.dataset.key;
+    const found = state.readings.find(r=>r.key===key);
+    bigValue.textContent = found ? String(found.value) : '—';
+    overlay.dataset.key = key;
+    overlay.dataset.dotId = dot.dataset.id;
+    overlay.classList.add('show');
+    overlay.setAttribute('aria-hidden','false');
+  } else {
+    if (!ble.connected){ alert('Connect to the BLE device first.'); return; }
+    // Turn blue immediately for UX, then send “?”
+    dot.classList.remove('gray'); dot.classList.add('blue');
+    // request value; will be saved on notify
+    requestReadingForDot(dot);
+  }
+}
+async function requestReadingForDot(dot){
+  if (inFlight) return; // keep single inflight to match device behavior
+  pendingDot=dot; inFlight=true;
+  await sendRaw('?');
+  clearTimeout(askTimer);
+  askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingDot=null; alert('No response within 2s.'); } },2000);
+}
+
+/* Popup actions */
+overlay.addEventListener('click', (e)=>{
+  if (e.target === overlay){ // click outside modal to close
+    overlay.classList.remove('show');
+    overlay.setAttribute('aria-hidden','true');
+  }
+});
+closeBtn.addEventListener('click', ()=>{
+  overlay.classList.remove('show');
+  overlay.setAttribute('aria-hidden','true');
+});
+overrideBtn.addEventListener('click', async ()=>{
+  if (!ble.connected){ alert('Connect to the BLE device first.'); return; }
+  // find the dot element by key
+  const key = overlay.dataset.key;
+  const dot = [...document.querySelectorAll('.dot')].find(d=>d.dataset.key===key);
+  if (!dot) return;
+  // keep it blue, send “?” and update when notify arrives
+  requestReadingForDot(dot);
+});
 
 /* ---------------- Firebase (dynamic import; uses persisted login) ---------------- */
 let auth=null, db=null;
@@ -412,7 +494,7 @@ let auth=null, db=null;
         if(typeof data.imgW==='number') state.naturalW=data.imgW;
         if(typeof data.imgH==='number') state.naturalH=data.imgH;
 
-        // points (ignore labels; start empty text)
+        // points
         state.points=(data.points||[]).map(p=>({
           id:p.id||`pt_${Math.random().toString(36).slice(2,8)}`,
           u:+p.u, v:+p.v, mode:p.mode==='single'?'single':'mirrored'
