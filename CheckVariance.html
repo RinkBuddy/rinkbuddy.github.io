@@ -10,7 +10,7 @@
   html,body{height:100%}
   body{ margin:0; background:#000; color:#e9eef9; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
 
-  /* Sticky header / frozen pane (same structure as Templates) */
+  /* Sticky header / frozen pane */
   header{
     position:sticky; top:0; z-index:30;
     display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center;
@@ -39,7 +39,7 @@
     background:#1a2033; color:#9ec5ff; border:1px solid #233154;
   }
 
-  /* Stage / viewport (copied pattern) */
+  /* Stage / viewport (same pattern as Templates) */
   .stage{ display:flex; justify-content:center; align-items:center; width:100%; }
   .viewport{
     position:relative; margin:10px auto 0; border:1px solid #191c26; border-radius:14px;
@@ -173,7 +173,8 @@ const saveBtn = document.getElementById('saveBtn');
 const bleStatus = document.getElementById('bleStatus');
 
 /* -------------------- App state (mirrors Templates page behavior) -------------------- */
-const img = new Image(); img.src = 'rink1.png';
+const img = new Image();
+img.src = 'rink1.png';
 
 const state = {
   naturalW: 600, naturalH: 1200,   // portrait source
@@ -190,14 +191,24 @@ const state = {
 
 /* -------------------- Auth gate -------------------- */
 onAuthStateChanged(auth, async (user) => {
+  // Always render the rink so the canvas isn’t tiny while auth is pending or blocked.
+  if (!initialCanvasReady) await ensureCanvasReady();
+
   if (!user) {
-    const provider = new GoogleAuthProvider();
-    try { await signInWithPopup(auth, provider); } catch(e){ console.warn(e); }
-    return;
+    // Try to sign in, but even if it fails we keep the rink visible.
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (e) {
+      console.warn('Sign-in skipped/blocked:', e?.message || e);
+      return; // Not signed in -> we can’t load templates, but UI stays usable.
+    }
   }
-  state.uid = user.uid;
-  await refreshTemplateList();
-  await ensureCanvasReady();
+
+  state.uid = auth.currentUser?.uid || null;
+  if (state.uid) {
+    await refreshTemplateList();
+  }
 });
 
 /* -------------------- Firestore helpers -------------------- */
@@ -259,6 +270,8 @@ templateSelect.addEventListener('change', async (e)=>{
 });
 
 /* -------------------- Canvas layout (IDENTICAL to Templates) -------------------- */
+let initialCanvasReady = false;
+
 function setCanvasSize(w,h){
   canvas.width  = Math.max(1, Math.round(w));
   canvas.height = Math.max(1, Math.round(h));
@@ -361,28 +374,39 @@ function addDotAtUV(p, side){
 
 function renderAll(){ drawRink(); renderDots(); }
 
-/* Boot canvas once image is ready */
+/* Boot canvas once image is ready (AND fall back on error) */
 async function ensureCanvasReady(){
-  if (img.complete) {
-    state.naturalW = img.naturalWidth  || state.naturalW;
-    state.naturalH = img.naturalHeight || state.naturalH;
+  // If already sized once, just re-apply layout
+  if (initialCanvasReady) { applyLayout(); return; }
+
+  if (img.complete && img.naturalWidth > 0) {
+    state.naturalW = img.naturalWidth;
+    state.naturalH = img.naturalHeight;
     applyLayout();
+    initialCanvasReady = true;
   } else {
     await new Promise(res=>{
-      img.onload = ()=>{ state.naturalW=img.naturalWidth||state.naturalW;
-                         state.naturalH=img.naturalHeight||state.naturalH;
-                         applyLayout(); res(); };
+      img.onload = ()=>{ 
+        state.naturalW = img.naturalWidth || state.naturalW;
+        state.naturalH = img.naturalHeight || state.naturalH;
+        applyLayout(); initialCanvasReady = true; res(); 
+      };
+      img.onerror = ()=>{ 
+        console.warn('rink1.png failed to load; using default dimensions.');
+        applyLayout(); initialCanvasReady = true; res(); 
+      };
     });
   }
 }
+
 window.addEventListener('resize', applyLayout);
 window.addEventListener('orientationchange', applyLayout);
 new ResizeObserver(applyLayout).observe(document.querySelector('header'));
 
 /* -------------------- BLE (Nordic UART, “?” flow preserved) -------------------- */
 const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-const NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // write / writeNR
-const NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // notify
+const NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -504,6 +528,9 @@ function userDocRef(uid){ return doc(db, 'users', uid); }
 
 /* Prevent ghost-drag */
 document.addEventListener('dragstart', e => { if (e.target.tagName==='IMG') e.preventDefault(); }, {capture:true});
+
+/* Render asap, even before auth settles */
+ensureCanvasReady();
 </script>
 </body>
 </html>
