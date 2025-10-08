@@ -19,11 +19,7 @@
   .center{justify-content:center}
   .right{justify-content:flex-end}
 
-  .btn{
-    appearance:none; border:0; border-radius:999px; padding:10px 14px;
-    font-weight:700; color:#fff; cursor:pointer; background:var(--btn);
-    box-shadow:0 6px 14px rgba(31,122,255,.18);
-  }
+  .btn{ appearance:none; border:0; border-radius:999px; padding:10px 14px; font-weight:700; color:#fff; cursor:pointer; background:var(--btn); box-shadow:0 6px 14px rgba(31,122,255,.18); }
   .btn.secondary{ background:#22304b; border:1px solid #2b3a59; }
   .btn:disabled{opacity:.6; cursor:not-allowed}
 
@@ -33,10 +29,7 @@
   }
   label{ color:var(--muted); font-weight:700; display:flex; gap:8px; align-items:center }
 
-  .pill{
-    display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px;
-    background:#1a2033; color:#9ec5ff; border:1px solid #233154;
-  }
+  .pill{ display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; background:#1a2033; color:#9ec5ff; border:1px solid #233154; }
 
   .stage{ display:flex; justify-content:center; align-items:center; width:100%; }
   .viewport{
@@ -116,12 +109,14 @@
 <p class="hint">Tap a dot to send “?”. When the device replies, the dot turns blue and shows the value.</p>
 
 <script type="module">
-/* -------------------- Firebase (Auth + Firestore) -------------------- */
+/* ---- Hard guard so one throw never kills the page ---- */
+try {
+
+/* ---------------- Firebase (uses persisted login from index.html) ---------------- */
 import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
 import { getAuth, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
 import { getFirestore, doc, collection, getDocs, getDoc, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
 
-/* Config */
 const firebaseConfig = {
   apiKey: "AIzaSyCYlPYVyeUMpcr8qgUTifHJiOCayhh7QCQ",
   authDomain: "rink-buddy-6f6ed.firebaseapp.com",
@@ -134,12 +129,12 @@ const firebaseConfig = {
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
-try { await setPersistence(auth, browserLocalPersistence); } catch { /* already persisted */ }
+try { await setPersistence(auth, browserLocalPersistence); } catch {}
 
-/* -------------------- DOM refs -------------------- */
-const view = document.getElementById('view');
+/* ---------------- DOM ---------------- */
+const view   = document.getElementById('view');
 const canvas = document.getElementById('rink');
-const ctx = canvas.getContext('2d', { willReadFrequently:true });
+const ctx    = canvas.getContext('2d', { willReadFrequently:true });
 
 const homeBtn = document.getElementById('homeBtn');
 const templateSelect = document.getElementById('templateSelect');
@@ -152,339 +147,211 @@ const connectBtn = document.getElementById('connectBtn');
 const saveBtn = document.getElementById('saveBtn');
 const bleStatus = document.getElementById('bleStatus');
 
-/* -------------------- App state -------------------- */
-const img = new Image(); img.src = 'rink1.png';
-let initialCanvasReady = false;  /* <<< declared BEFORE use in auth callback */
+/* ---------------- State ---------------- */
+const img = new Image();
+img.src = 'rink1.png';                 // make sure this file is next to checkvariance.html
 
+let initialCanvasReady = false;
 const state = {
-  naturalW: 600, naturalH: 1200,
-  mobile: false,
-  rotated: false,
-  centerY: 0.5,
-  points: [],
-  labelsForSide: new Map(),
-  uid: null,
-  allNames: [],
-  currentName: null,
-  readings: [],
+  naturalW: 600, naturalH: 1200,      // portrait source default
+  mobile:false, rotated:false, centerY:0.5,
+  points:[], labelsForSide:new Map(),
+  uid:null, allNames:[], currentName:null,
+  readings:[]
 };
 
-/* -------------------- Boot canvas FIRST (independent of auth) -------------------- */
-ensureCanvasReady();
+/* ---------------- Button wiring (attach NOW so they work even if auth fails) ---------------- */
+homeBtn.addEventListener('click', ()=>{ location.href='index.html'; });
 
-/* -------------------- Auth: rely on persistent login from index.html -------------------- */
-onAuthStateChanged(auth, async (user) => {
-  // Make sure canvas is sized even if auth fires immediately.
-  if (!initialCanvasReady) await ensureCanvasReady();
-
-  if (!user) {
-    // Not signed in (rare here), keep UI usable; templates won’t load.
-    return;
-  }
-  state.uid = user.uid;
-  await refreshTemplateList();
-});
-
-/* -------------------- Firestore helpers -------------------- */
-function userDocRef(uid){ return doc(db, 'users', uid); }
-function templatesColRef(uid){ return collection(userDocRef(uid), 'templates'); }
-function templateDocRef(uid, name){ return doc(templatesColRef(uid), name); }
-
-async function refreshTemplateList(){
-  if (!state.uid) return;
-  const snap = await getDocs(templatesColRef(state.uid));
-  state.allNames = snap.docs.map(d=>d.id).sort((a,b)=> a.localeCompare(b));
-  templateSelect.innerHTML = `<option value="">Select a template…</option>`;
-  state.allNames.forEach(n=>{
-    const opt = document.createElement('option');
-    opt.value = n; opt.textContent = n;
-    templateSelect.appendChild(opt);
-  });
-}
-
-async function loadTemplateByName(name){
-  const ref = templateDocRef(state.uid, name);
-  const docSnap = await getDoc(ref);
-  if (!docSnap.exists()) return false;
-  const data = docSnap.data();
-
-  state.centerY = typeof data.centerY === 'number' ? data.centerY : 0.5;
-  if (typeof data.imgW === 'number') state.naturalW = data.imgW;
-  if (typeof data.imgH === 'number') state.naturalH = data.imgH;
-
-  state.points = Array.isArray(data.points) ? data.points.map(p=>({
-    id: p.id || `pt_${Math.random().toString(36).slice(2,8)}`,
-    u: +p.u, v: +p.v,
-    mode: p.mode==='single' ? 'single' : 'mirrored',
-    labels: p.labels || null
-  })) : [];
-
-  state.labelsForSide.clear();
-  for (const p of state.points){
-    if (p.labels){
-      for (const side of Object.keys(p.labels)){
-        state.labelsForSide.set(`${p.id}:${side}`, String(p.labels[side]));
-      }
-    }
-  }
-
-  state.currentName = name;
-  renderAll();
-  return true;
-}
-
-/* -------------------- Header actions -------------------- */
-homeBtn.addEventListener('click', ()=>{ window.location.href = 'index.html'; });
-templateSelect.addEventListener('change', async (e)=>{
-  const name = e.target.value;
-  state.readings = [];
-  saveBtn.disabled = true;
-  if (!name){ clearDots(); drawRink(); return; }
-  await loadTemplateByName(name);
-});
-
-/* -------------------- Canvas layout (same as Templates) -------------------- */
-function setCanvasSize(w,h){
-  canvas.width  = Math.max(1, Math.round(w));
-  canvas.height = Math.max(1, Math.round(h));
-  view.style.width  = canvas.width + 'px';
-  view.style.height = canvas.height + 'px';
-}
-
-function applyLayout(){
-  const headerH = document.querySelector('header').offsetHeight || 64;
-  document.documentElement.style.setProperty('--hdrH', headerH + 'px');
-
-  state.mobile = window.matchMedia('(max-width: 900px)').matches;
-  const imageIsVertical = state.naturalH > state.naturalW;
-  const wantVertical    = state.mobile;
-  state.rotated = (wantVertical !== imageIsVertical);
-
-  let availW, availH;
-  if (state.mobile){
-    const stage = document.querySelector('.stage');
-    availW = Math.max(1, stage.clientWidth  - 12);
-    availH = Math.max(1, stage.clientHeight - 12);
-    if (availW <= 1 || availH <= 1) { requestAnimationFrame(applyLayout); return; }
-  } else {
-    availW = Math.max(1, window.innerWidth  - 24);
-    availH = Math.max(1, window.innerHeight - headerH - 24);
-  }
-
-  const aspect = state.rotated ? (state.naturalH/state.naturalW) : (state.naturalW/state.naturalH);
-  let w = availW, h = w/aspect; if (h>availH){ h=availH; w=h*aspect; }
-  setCanvasSize(w,h);
-
-  const d = Math.max(2, Math.round(Math.min(canvas.width, canvas.height) * 0.10));
-  document.documentElement.style.setProperty('--dot-size', d + 'px');
-
-  drawRink();
-  renderDots();
-}
-
-function drawRink(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  if (state.rotated){
-    ctx.save();
-    ctx.translate(0, canvas.height);
-    ctx.rotate(-Math.PI/2);
-    ctx.drawImage(img, 0, 0, canvas.height, canvas.width);
-    ctx.restore();
-  } else {
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  }
-}
-
-/* Mapping identical to Templates */
-function uvToCanvas(u,v){
-  const W=canvas.width, H=canvas.height;
-  if (state.mobile) return { x:u*W, y:v*H };
-  return { x:v*W, y:(1-u)*H };
-}
-
-/* Dots (read-only) */
-function clearDots(){ view.querySelectorAll('.dot').forEach(n=>n.remove()); }
-
-function renderDots(){
-  clearDots();
-  if (!state.points.length) return;
-  state.points.forEach((pt) => {
-    if (pt.mode === 'single'){
-      addDotAtUV(pt, 'single');
-    } else {
-      const vTop = Math.min(pt.v, 2*state.centerY - pt.v);
-      const vBot = Math.max(pt.v, 2*state.centerY - pt.v);
-      addDotAtUV({u:pt.u, v:vTop, id:pt.id}, 'top');
-      addDotAtUV({u:pt.u, v:vBot, id:pt.id}, 'bottom');
-    }
-  });
-}
-
-function addDotAtUV(p, side){
-  const pos = uvToCanvas(p.u, p.v);
-  const d = document.createElement('button');
-  d.type = 'button';
-  d.className = 'dot gray';
-  d.style.left = (pos.x/canvas.width*100)+'%';
-  d.style.top  = (pos.y/canvas.height*100)+'%';
-
-  const key = `${p.id}:${side}`;
-  const initialLabel = state.labelsForSide.get(key) || '';
-  d.textContent = initialLabel;
-
-  d.dataset.key = key;
-  d.dataset.id = p.id;
-  d.dataset.side = side;
-  d.dataset.u = String(p.u);
-  d.dataset.v = String(p.v);
-
-  d.addEventListener('click', () => requestReadingForDot(d));
-  view.appendChild(d);
-}
-
-function renderAll(){ drawRink(); renderDots(); }
-
-/* Image boot (with fallback) */
-async function ensureCanvasReady(){
-  if (initialCanvasReady) { applyLayout(); return; }
-  if (img.complete && img.naturalWidth > 0){
-    state.naturalW = img.naturalWidth; state.naturalH = img.naturalHeight;
-    applyLayout(); initialCanvasReady = true; return;
-  }
-  await new Promise(res=>{
-    img.onload = ()=>{ state.naturalW=img.naturalWidth||state.naturalW; state.naturalH=img.naturalHeight||state.naturalH; applyLayout(); initialCanvasReady=true; res(); };
-    img.onerror = ()=>{ applyLayout(); initialCanvasReady=true; res(); };
-  });
-}
-window.addEventListener('resize', applyLayout);
-window.addEventListener('orientationchange', applyLayout);
-new ResizeObserver(applyLayout).observe(document.querySelector('header'));
-
-/* -------------------- BLE (Nordic UART) -------------------- */
+/* BLE — same “?” flow */
 const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
-
-const enc = new TextEncoder();
-const dec = new TextDecoder();
-
-let ble = { device:null, server:null, service:null, rx:null, tx:null, connected:false };
-let inFlight = false;
-let pendingDot = null;
-let askTimer = null;
+const enc=new TextEncoder(), dec=new TextDecoder();
+let ble={device:null,server:null,service:null,rx:null,tx:null,connected:false}, inFlight=false, pendingDot=null, askTimer=null;
 
 function setBleUI(connected){
   bleStatus.textContent = connected ? 'connected' : 'disconnected';
   bleStatus.style.background = connected ? '#13301f' : '#1a2033';
   bleStatus.style.color = connected ? '#95ffb5' : '#9ec5ff';
 }
-
-async function connectBle(){
+connectBtn.addEventListener('click', async ()=>{
   try{
-    if (!('bluetooth' in navigator)) { alert('Use Chrome/Edge over HTTPS for Web Bluetooth.'); return; }
-    const device = await navigator.bluetooth.requestDevice({
-      filters:[{ name: 'BUDDY' }],
-      optionalServices:[NUS_SERVICE_UUID]
-    });
-    device.addEventListener('gattserverdisconnected', () => { ble.connected=false; setBleUI(false); });
-
+    const device = await navigator.bluetooth.requestDevice({ filters:[{name:'BUDDY'}], optionalServices:[NUS_SERVICE_UUID] });
+    device.addEventListener('gattserverdisconnected', ()=>{ ble.connected=false; setBleUI(false); });
     const server = await device.gatt.connect();
-    const service = await server.getPrimaryService(NUS_SERVICE_UUID);
-    const tx = await service.getCharacteristic(NUS_TX_CHAR_UUID);
+    const service= await server.getPrimaryService(NUS_SERVICE_UUID);
+    const tx=await service.getCharacteristic(NUS_TX_CHAR_UUID);
     await tx.startNotifications();
     tx.addEventListener('characteristicvaluechanged', handleNotify);
-    const rx = await service.getCharacteristic(NUS_RX_CHAR_UUID);
-
-    ble = { device, server, service, rx, tx, connected:true };
-    setBleUI(true);
-  } catch(err){
-    console.error(err);
-    ble.connected = false; setBleUI(false);
-  }
-}
-
-function handleNotify(ev){
-  const text = dec.decode(ev.target.value).trim();
-  const value = parseIncomingValue(text);
-  inFlight = false; clearTimeout(askTimer);
-
+    const rx=await service.getCharacteristic(NUS_RX_CHAR_UUID);
+    ble={device,server,service,rx,tx,connected:true}; setBleUI(true);
+  }catch(e){ console.error(e); alert('BLE connect failed. Use Chrome over HTTPS.'); }
+});
+function handleNotify(e){
+  const text = dec.decode(e.target.value).trim();
+  const value = (text.match(/-?\d+(\.\d+)?/)||[])[0] || text;
+  inFlight=false; clearTimeout(askTimer);
   if (pendingDot){
-    pendingDot.classList.remove('gray');
-    pendingDot.classList.add('blue');
+    pendingDot.classList.remove('gray'); pendingDot.classList.add('blue');
     pendingDot.textContent = value;
-
-    const key = pendingDot.dataset.key;
-    const u = +pendingDot.dataset.u, v = +pendingDot.dataset.v;
-    upsertReading(key, value, u, v);
-
-    pendingDot = null;
-    saveBtn.disabled = state.readings.length === 0;
+    const key=pendingDot.dataset.key, u=+pendingDot.dataset.u, v=+pendingDot.dataset.v;
+    const i=state.readings.findIndex(r=>r.key===key); const rec={key,value,u,v};
+    if(i>=0) state.readings[i]=rec; else state.readings.push(rec);
+    pendingDot=null; saveBtn.disabled = state.readings.length===0;
   }
 }
+async function sendRaw(s){ if(ble.connected&&ble.rx){ try{ await ble.rx.writeValueWithoutResponse(enc.encode(s)); }catch(e){console.error(e);} } }
+async function requestReadingForDot(dot){ if(!ble.connected){ alert('Connect first.'); return; } if(inFlight) return; pendingDot=dot; inFlight=true; await sendRaw('?'); clearTimeout(askTimer); askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingDot=null; alert('No response within 2s.'); }},2000); }
 
-function parseIncomingValue(t){
-  const m = t.match(/-?\d+(\.\d+)?/);
-  return m ? m[0] : t;
-}
-
-async function sendRaw(str){
-  if (!ble.connected || !ble.rx) return;
-  try{ await ble.rx.writeValueWithoutResponse(enc.encode(str)); }
-  catch(err){ console.error('BLE send error', err); }
-}
-
-async function requestReadingForDot(dotEl){
-  if (!ble.connected){ alert('Connect to the BLE device first.'); return; }
-  if (inFlight) return;
-  pendingDot = dotEl;
-  inFlight = true;
-  await sendRaw('?');
-  clearTimeout(askTimer);
-  askTimer = setTimeout(()=>{ if(inFlight){ inFlight=false; pendingDot=null; alert('No response within 2s.'); } }, 2000);
-}
-
-function upsertReading(key, value, u, v){
-  const i = state.readings.findIndex(r=>r.key===key);
-  const rec = { key, value, u, v };
-  if (i>=0) state.readings[i] = rec; else state.readings.push(rec);
-}
-
-/* -------------------- Save variance -------------------- */
-async function saveVariance(){
-  if (!state.uid){ alert('Sign in required.'); return; }
+/* Save */
+saveBtn.addEventListener('click', async ()=>{
+  if (!state.uid) { alert('Sign in required.'); return; }
   if (!state.currentName){ alert('Pick a template first.'); return; }
   if (!state.readings.length){ alert('Take at least one reading.'); return; }
-
-  const payload = {
-    templateName: state.currentName,
-    rinkName: selRink.value,
-    padName: selPad.value,
-    employeeName: selEmp.value,
-    readings: state.readings,
-    centerY: state.centerY,
-    createdAt: serverTimestamp(),
-    imgW: state.naturalW, imgH: state.naturalH
-  };
-
   try{
-    const col = collection(userDocRef(state.uid), 'variances');
-    await addDoc(col, payload);
+    await addDoc(collection(userDocRef(state.uid), 'variances'), {
+      templateName: state.currentName,
+      rinkName: selRink.value, padName: selPad.value, employeeName: selEmp.value,
+      readings: state.readings, centerY: state.centerY,
+      imgW: state.naturalW, imgH: state.naturalH, createdAt: serverTimestamp()
+    });
     alert('Variance saved.');
-  }catch(err){
-    console.error(err);
-    alert('Save failed. See console.');
+  }catch(e){ console.error(e); alert('Save failed (console has details).'); }
+});
+function userDocRef(uid){ return doc(db,'users',uid); }
+
+/* ---------------- Layout (identical to Templates logic) ---------------- */
+function setCanvasSize(w,h){
+  canvas.width=Math.max(1,Math.round(w));
+  canvas.height=Math.max(1,Math.round(h));
+  view.style.width=canvas.width+'px';
+  view.style.height=canvas.height+'px';
+}
+function applyLayout(){
+  const headerH=document.querySelector('header').offsetHeight||64;
+  document.documentElement.style.setProperty('--hdrH', headerH+'px');
+
+  state.mobile=window.matchMedia('(max-width: 900px)').matches;
+  const imageIsVertical=state.naturalH>state.naturalW;
+  const wantVertical=state.mobile;
+  state.rotated=(wantVertical!==imageIsVertical); // desktop -> true
+
+  let availW, availH;
+  if(state.mobile){
+    const stage=document.querySelector('.stage');
+    availW=Math.max(1,stage.clientWidth-12);
+    availH=Math.max(1,stage.clientHeight-12);
+    if(availW<=1||availH<=1){ requestAnimationFrame(applyLayout); return; }
+  }else{
+    availW=Math.max(1,window.innerWidth-24);
+    availH=Math.max(1,window.innerHeight-headerH-24);
+  }
+
+  const aspect = state.rotated ? (state.naturalH/state.naturalW) : (state.naturalW/state.naturalH);
+  let w=availW, h=w/aspect; if(h>availH){ h=availH; w=h*aspect; }
+  setCanvasSize(w,h);
+
+  const d=Math.max(2, Math.round(Math.min(canvas.width, canvas.height)*0.10));
+  document.documentElement.style.setProperty('--dot-size', d+'px');
+
+  drawRink(); renderDots();
+}
+function drawRink(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(state.rotated){
+    // same CW visual rotation as Templates
+    ctx.save(); ctx.translate(0, canvas.height); ctx.rotate(-Math.PI/2);
+    ctx.drawImage(img, 0, 0, canvas.height, canvas.width); ctx.restore();
+  }else{
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   }
 }
+function uvToCanvas(u,v){
+  const W=canvas.width, H=canvas.height;
+  return state.mobile ? {x:u*W, y:v*H} : {x:v*W, y:(1-u)*H};
+}
 
-/* -------------------- Wire up UI -------------------- */
-connectBtn.addEventListener('click', connectBle);
-saveBtn.addEventListener('click', saveVariance);
+/* Dots (read-only) */
+function clearDots(){ view.querySelectorAll('.dot').forEach(n=>n.remove()); }
+function renderDots(){
+  clearDots();
+  state.points.forEach(pt=>{
+    if(pt.mode==='single'){ add(pt,'single'); }
+    else{
+      const vTop=Math.min(pt.v, 2*state.centerY-pt.v);
+      const vBot=Math.max(pt.v, 2*state.centerY-pt.v);
+      add({u:pt.u,v:vTop,id:pt.id}, 'top');
+      add({u:pt.u,v:vBot,id:pt.id}, 'bottom');
+    }
+  });
+}
+function add(p,side){
+  const pos=uvToCanvas(p.u,p.v);
+  const d=document.createElement('button');
+  d.type='button'; d.className='dot gray';
+  d.style.left=(pos.x/canvas.width*100)+'%';
+  d.style.top =(pos.y/canvas.height*100)+'%';
+  const key=`${p.id}:${side}`;
+  d.textContent = state.labelsForSide.get(key) || '';
+  Object.assign(d.dataset, { key, id:p.id, side, u:String(p.u), v:String(p.v) });
+  d.addEventListener('click', ()=>requestReadingForDot(d));
+  view.appendChild(d);
+}
 
-/* Helper */
-function userDocRef(uid){ return doc(db, 'users', uid); }
+/* Boot canvas immediately (don’t wait for auth or image) */
+applyLayout(); // <-- this makes the canvas big right away
 
-/* Prevent ghost-drag */
+// When the image is actually ready, re-layout & redraw
+if (img.complete && img.naturalWidth>0){
+  state.naturalW=img.naturalWidth; state.naturalH=img.naturalHeight;
+  applyLayout(); initialCanvasReady=true;
+}else{
+  img.onload = ()=>{ state.naturalW=img.naturalWidth||state.naturalW; state.naturalH=img.naturalHeight||state.naturalH; applyLayout(); initialCanvasReady=true; };
+  img.onerror = ()=>{ console.warn('rink1.png failed to load; using defaults'); applyLayout(); initialCanvasReady=true; };
+}
+
+window.addEventListener('resize', applyLayout);
+window.addEventListener('orientationchange', applyLayout);
+new ResizeObserver(applyLayout).observe(document.querySelector('header'));
+
+/* ---------------- Auth: just use persisted session, don’t pop up here ---------------- */
+onAuthStateChanged(auth, async (user)=>{
+  if (!user) return;           // still renders; you just can't fetch templates
+  state.uid = user.uid;
+  try{
+    const snap = await getDocs(collection(doc(db,'users',state.uid),'templates'));
+    state.allNames = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
+    templateSelect.innerHTML = `<option value="">Select a template…</option>`;
+    state.allNames.forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=n; templateSelect.appendChild(o);});
+  }catch(e){ console.error('Template list error', e); }
+});
+
+/* Template picker */
+templateSelect.addEventListener('change', async e=>{
+  const name=e.target.value; state.readings=[]; saveBtn.disabled=true;
+  if(!name){ clearDots(); drawRink(); return; }
+  try{
+    const docSnap = await getDoc(doc(collection(doc(db,'users',state.uid),'templates'), name));
+    if(!docSnap.exists()) return;
+    const data=docSnap.data();
+    state.centerY = typeof data.centerY==='number'?data.centerY:0.5;
+    if(typeof data.imgW==='number') state.naturalW=data.imgW;
+    if(typeof data.imgH==='number') state.naturalH=data.imgH;
+    state.points = (data.points||[]).map(p=>({ id:p.id||`pt_${Math.random().toString(36).slice(2,8)}`, u:+p.u, v:+p.v, mode:p.mode==='single'?'single':'mirrored', labels:p.labels||null }));
+    state.labelsForSide.clear();
+    for(const p of state.points){ if(p.labels){ for(const side of Object.keys(p.labels)){ state.labelsForSide.set(`${p.id}:${side}`, String(p.labels[side])); } } }
+    state.currentName=name;
+    applyLayout(); // refresh sizing in case imgW/H changed
+  }catch(err){ console.error('Load template error', err); }
+});
+
+/* Misc */
 document.addEventListener('dragstart', e => { if (e.target.tagName==='IMG') e.preventDefault(); }, {capture:true});
+
+} catch (fatal) {
+  console.error('checkvariance init error', fatal);
+}
 </script>
 </body>
 </html>
