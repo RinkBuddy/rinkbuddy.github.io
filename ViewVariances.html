@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rinkbuddy — View Variance</title>
+<style>
+  :root { --btn:#1f7aff; --muted:#9fb0d0; --dot-size:10px; --hdrH:64px; --blue:#4da3ff; --gray:#141824; }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{ margin:0; background:#000; color:#e9eef9; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+
+  header{
+    position:sticky; top:0; z-index:30;
+    display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center;
+    padding:10px 12px; background:#0b0d13; border-bottom:1px solid #1b1e27;
+  }
+  .left,.center,.right{display:flex; gap:10px; align-items:center}
+  .center{justify-content:center}
+  .right{justify-content:flex-end}
+
+  .btn{
+    appearance:none; border:0; border-radius:999px; padding:10px 14px;
+    font-weight:700; color:#fff; cursor:pointer; background:var(--btn);
+    box-shadow:0 6px 14px rgba(31,122,255,.18);
+  }
+  .btn.secondary{ background:#22304b; border:1px solid #2b3a59; }
+  .btn:disabled{opacity:.6; cursor:not-allowed}
+
+  select{
+    background:#121623; color:#fff; border:1px solid #1f2637; border-radius:10px;
+    padding:10px 12px; min-width:260px; font-weight:600;
+  }
+  label{ color:var(--muted); font-weight:700; display:flex; gap:8px; align-items:center }
+
+  .stage{ display:flex; justify-content:center; align-items:center; width:100%; }
+  .viewport{
+    position:relative; margin:10px auto 0; border:1px solid #191c26; border-radius:14px;
+    overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.35); background:#000;
+  }
+  canvas#rink { display:block; width:100%; height:100%; }
+
+  /* Tiny dots for viewing */
+  .dot{
+    position:absolute; transform:translate(-50%,-50%); width:var(--dot-size); height:var(--dot-size);
+    border-radius:999px; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.3);
+    background:#bfc8d9;  /* light so it shows on rink */
+    user-select:none; pointer-events:none;
+  }
+
+  /* Value labels near dots */
+  .vlabel{
+    position:absolute; transform:translate(-50%,-100%); /* default: above */
+    color:#000; font-weight:900; font-size:12px; line-height:1; white-space:nowrap;
+    user-select:none; text-shadow:none; pointer-events:none;
+  }
+  .vlabel.below{ transform:translate(-50%, 0%); } /* if above would clip */
+
+  .door{
+    position:absolute; transform-origin:50% 50%;
+    background:#ffd600; color:#000; border:2px solid #000;
+    border-radius:6px; font-weight:900; letter-spacing:1px;
+    display:flex; align-items:center; justify-content:center;
+    user-select:none; pointer-events:none;
+    box-shadow:0 6px 18px rgba(0,0,0,.35);
+  }
+
+  .hint{ color:#9fb0d0; margin:10px 12px 18px }
+
+  @media (min-width: 901px){
+    .stage{ min-height: calc(100vh - var(--hdrH)); }
+  }
+  @media (max-width: 900px){
+    html, body { height: 100svh; overflow: hidden; }
+    header{
+      position:fixed; top:0; left:0; right:0; z-index:40;
+      display:flex; gap:10px; align-items:center;
+      overflow-x:auto; overflow-y:hidden; white-space:nowrap;
+      -webkit-overflow-scrolling:touch; scrollbar-width:none;
+    }
+    header::-webkit-scrollbar{display:none}
+    .left,.center,.right{display:inline-flex; gap:10px; align-items:center}
+    .app{ padding-top: var(--hdrH); height: 100svh; overflow:hidden; }
+    .stage{ height: calc(100svh - var(--hdrH)); align-items:center; justify-content:center; }
+    .viewport{ margin:6px auto 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="left">
+    <button id="homeBtn" class="btn secondary">Home</button>
+
+    <label>Arena:
+      <span id="txtArena" style="color:#e9eef9;font-weight:800">—</span>
+    </label>
+    <label>Pad:
+      <span id="txtPad" style="color:#e9eef9;font-weight:800">—</span>
+    </label>
+    <label>Employee:
+      <span id="txtEmp" style="color:#e9eef9;font-weight:800">—</span>
+    </label>
+  </div>
+
+  <div class="center">
+    <label style="color:#e9eef9">
+      <span style="color:#9fb0d0">Select a variance…</span>
+      <select id="varianceSelect">
+        <option value="">Select a variance…</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="right"></div>
+</header>
+
+<div class="app">
+  <div class="stage">
+    <div id="view" class="viewport">
+      <canvas id="rink"></canvas>
+      <div id="door" class="door" style="display:none">DOOR</div>
+    </div>
+  </div>
+</div>
+
+<p class="hint">Select a saved variance to view all readings.</p>
+
+<script>
+/* ---------------- DOM refs ---------------- */
+const view   = document.getElementById('view');
+const canvas = document.getElementById('rink');
+const ctx    = canvas.getContext('2d', { willReadFrequently:true });
+const doorEl = document.getElementById('door');
+
+const homeBtn = document.getElementById('homeBtn');
+const varianceSelect = document.getElementById('varianceSelect');
+
+const txtArena = document.getElementById('txtArena');
+const txtPad   = document.getElementById('txtPad');
+const txtEmp   = document.getElementById('txtEmp');
+
+/* ---------------- Immediate button wiring ---------------- */
+homeBtn.addEventListener('click', ()=>{ location.href='index.html'; });
+
+/* ---------------- Canvas + layout ---------------- */
+const img = new Image(); img.src='rink1.png';
+const state={
+  naturalW:600, naturalH:1200, mobile:false, rotated:false, centerY:0.5,
+  points:[], uid:null, currentVarianceId:null,
+  readings:[],                      // [{key, value, u, v}]
+  doorCanon:{ edge:0, t:0.5 },      // portrait canonical
+  doorDisp: { edge:0, t:0.5 },
+  doorLen:100, doorThick:20
+};
+
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function setCanvasSize(w,h){
+  canvas.width=Math.max(1,Math.round(w));
+  canvas.height=Math.max(1,Math.round(h));
+  view.style.width=canvas.width+'px';
+  view.style.height=canvas.height+'px';
+}
+function applyLayout(){
+  const headerH=document.querySelector('header').offsetHeight||64;
+  document.documentElement.style.setProperty('--hdrH', headerH+'px');
+
+  state.mobile=window.matchMedia('(max-width: 900px)').matches;
+  const imageIsVertical=state.naturalH>state.naturalW;
+  const wantVertical=state.mobile;
+  state.rotated=(wantVertical!==imageIsVertical); // desktop rotates
+
+  let availW, availH;
+  if(state.mobile){
+    const stage=document.querySelector('.stage');
+    availW=Math.max(1,stage.clientWidth-12);
+    availH=Math.max(1,stage.clientHeight-12);
+    if(availW<=1||availH<=1){ requestAnimationFrame(applyLayout); return; }
+  }else{
+    availW=Math.max(1,window.innerWidth-24);
+    availH=Math.max(1,window.innerHeight-headerH-24);
+  }
+  const aspect = state.rotated ? (state.naturalH/state.naturalW) : (state.naturalW/state.naturalH);
+  let w=availW, h=w/aspect; if(h>availH){ h=availH; w=h*aspect; }
+  setCanvasSize(w,h);
+
+  // Tiny dots
+  const d=Math.max(2, Math.round(Math.min(canvas.width, canvas.height)*0.03));
+  document.documentElement.style.setProperty('--dot-size', d+'px');
+
+  // Door size (match template math)
+  const longSide = Math.max(canvas.width, canvas.height);
+  state.doorLen   = Math.round(longSide * 0.20 * 0.6);
+  state.doorThick = Math.max(8, Math.round(state.doorLen * 0.16));
+  doorEl.style.width = state.doorLen + 'px';
+  doorEl.style.height = state.doorThick + 'px';
+  doorEl.style.fontSize = Math.round(state.doorThick*0.55) + 'px';
+  doorEl.style.lineHeight = state.doorThick + 'px';
+
+  // Recompute display door from canonical for current rotation
+  state.doorDisp = doorCanonicalToDisplay(state.doorCanon);
+  drawRink(); renderDots(); positionDoor();
+}
+function drawRink(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(state.rotated){
+    ctx.save(); ctx.translate(0, canvas.height); ctx.rotate(-Math.PI/2);
+    ctx.drawImage(img, 0, 0, canvas.height, canvas.width); ctx.restore();
+  } else {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  }
+}
+function uvToCanvas(u,v){
+  const W=canvas.width, H=canvas.height;
+  return state.mobile ? {x:u*W, y:v*H} : {x:v*W, y:(1-u)*H};
+}
+function clearDots(){
+  view.querySelectorAll('.dot').forEach(n=>n.remove());
+  view.querySelectorAll('.vlabel').forEach(n=>n.remove());
+}
+function renderDots(){
+  clearDots();
+  // Render tiny dots + labels for current readings
+  const labelOffset = Math.max(10, Math.round(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dot-size'))*1.8));
+  state.readings.forEach(r=>{
+    const pos=uvToCanvas(r.u, r.v);
+    // Dot
+    const dot=document.createElement('div');
+    dot.className='dot';
+    dot.style.left=(pos.x/canvas.width*100)+'%';
+    dot.style.top =(pos.y/canvas.height*100)+'%';
+    view.appendChild(dot);
+
+    // Label – black text, above unless clipping
+    const lab=document.createElement('div');
+    lab.className='vlabel';
+    lab.textContent = String(r.value);
+    // Position calculation in px (use transform class only for above/below)
+    const pxX = pos.x, pxY = pos.y;
+    const willClipTop = (pxY - labelOffset) < 0;
+    if (willClipTop) lab.classList.add('below');
+    lab.style.left = (pxX / canvas.width * 100) + '%';
+    lab.style.top  = (pxY / canvas.height * 100) + '%';
+    view.appendChild(lab);
+  });
+}
+
+/* ---- DOOR mapping (portrait canonical -> current display) ---- */
+const CANON_TO_DISPLAY = [3,0,1,2]; // when rotated CW visually
+function doorCanonicalToDisplay(doorCanon){
+  if (!doorCanon) return { edge:0, t:0.5 };
+  let { edge:e, t } = doorCanon;
+  if (!state.rotated) return { edge:e|0, t:clamp(t,0,1) };
+  const dispEdge = CANON_TO_DISPLAY[e|0];
+  const dispT = (e===0 || e===2) ? (1 - t) : t;
+  return { edge: dispEdge, t: clamp(dispT, 0, 1) };
+}
+function positionDoor(){
+  if (doorEl.style.display === 'none') return;
+  const W=canvas.width, H=canvas.height;
+  const L=state.doorLen, T=state.doorThick, halfL=L/2, halfT=T/2;
+
+  const edgeInset = Math.min(halfT * 0.6, 10);
+  const longSide = Math.max(W,H);
+  const CORNER_EXTRA_FRAC = 0.02;
+  const cornerInset = Math.min(halfL - halfT, edgeInset + longSide * CORNER_EXTRA_FRAC);
+
+  let {edge, t} = state.doorDisp;
+  edge = edge|0; t = clamp(t,0,1);
+
+  let cx=0, cy=0, angle=0;
+  const cornerThresh = (edge===0 || edge===2) ? (halfL/W) : (halfL/H);
+
+  if (t <= cornerThresh){
+    if (edge===0 || edge===3){ const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=c; angle=-45; }
+    else if (edge===1){        const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=c; angle=45; }
+    else if (edge===2){        const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=H-c; angle=45; }
+  } else if (t >= 1 - cornerThresh){
+    if (edge===0){             const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=c; angle=45; }
+    else if (edge===1 || edge===2){ const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=H-c; angle=-45; }
+    else if (edge===3){        const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=H-c; angle=45; }
+  } else {
+    if (edge===0){ cx = t*W; cy = (halfT - edgeInset); angle = 0; }
+    else if (edge===2){ cx = t*W; cy = H - (halfT - edgeInset); angle = 0; }
+    else if (edge===1){ cx = W - (halfT - edgeInset); cy = t*H; angle = 90; }
+    else { cx = (halfT - edgeInset); cy = t*H; angle = 90; }
+
+    const minC = Math.max(halfT, halfL - cornerInset);
+    if (edge===0 || edge===2) cx = clamp(cx, minC, W - minC);
+    else                      cy = clamp(cy, minC, H - minC);
+  }
+
+  doorEl.style.left = (cx / W * 100) + '%';
+  doorEl.style.top  = (cy / H * 100) + '%';
+  doorEl.style.transform = `translate(-50%,-50%) rotate(${angle}deg)`;
+}
+
+/* draw ASAP (even before image/auth) */
+applyLayout();
+if (img.complete && img.naturalWidth>0){
+  state.naturalW=img.naturalWidth; state.naturalH=img.naturalHeight; applyLayout();
+}else{
+  img.onload = ()=>{ state.naturalW=img.naturalWidth||state.naturalW; state.naturalH=img.naturalHeight||state.naturalH; applyLayout(); };
+  img.onerror = ()=>{ applyLayout(); };
+}
+window.addEventListener('resize', applyLayout);
+window.addEventListener('orientationchange', applyLayout);
+new ResizeObserver(()=>applyLayout()).observe(document.querySelector('header'));
+
+/* ---------------- Firebase (dynamic import; uses persisted login) ---------------- */
+let auth=null, db=null;
+(async ()=>{
+  try{
+    const appMod = await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js');
+    const authMod= await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js');
+    const fsMod  = await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js');
+
+    const firebaseConfig = {
+      apiKey:"AIzaSyCYlPYVyeUMpcr8qgUTifHJiOCayhh7QCQ",
+      authDomain:"rink-buddy-6f6ed.firebaseapp.com",
+      projectId:"rink-buddy-6f6ed",
+      storageBucket:"rink-buddy-6f6ed.appspot.com",
+      messagingSenderId:"1096930052063",
+      appId:"1:1096930052063:web:6b97608f1cdd3f5111666a",
+      measurementId:"G-7HPRJ6T9LD"
+    };
+
+    const app = (appMod.getApps().length ? appMod.getApps()[0] : appMod.initializeApp(firebaseConfig));
+    auth = authMod.getAuth(app);
+    db   = fsMod.getFirestore(app);
+    try { await authMod.setPersistence(auth, authMod.browserLocalPersistence); } catch {}
+
+    // Helpers
+    const variancesCol = (uid)=> fsMod.collection(fsMod.doc(db,'users',uid),'variances');
+
+    // Format: "Sep 21 2025 5:30 - Arena - Pad"
+    const fmtVarianceName = (doc) =>{
+      const d = doc.data()||{};
+      let ts = d.createdAt?.toDate?.() || null;
+      // Fallback if createdAt missing
+      if(!ts){ ts = new Date(); }
+      const fmt = new Intl.DateTimeFormat('en-US', { month:'short', day:'2-digit', year:'numeric', hour:'numeric', minute:'2-digit' });
+      // e.g., "Sep 21, 2025, 5:30 PM" -> massage to "Sep 21 2025 5:30"
+      let s = fmt.format(ts).replace(',', '').replace(',', '');
+      // remove AM/PM to match your example
+      s = s.replace(/\s?(AM|PM)$/i,'');
+      return `${s} - ${d.rinkName||'—'} - ${d.padName||'—'}`;
+    };
+
+    // Load variances list on sign-in
+    authMod.onAuthStateChanged(auth, async (user)=>{
+      if (!user) return;
+      state.uid = user.uid;
+
+      try{
+        const snap = await fsMod.getDocs(variancesCol(state.uid));
+        const items = snap.docs
+          .map(d=>{
+            const data = d.data()||{};
+            const created = data.createdAt?.toDate?.() || new Date(0);
+            return { id:d.id, label: fmtVarianceName(d), created };
+          })
+          .sort((a,b)=> b.created - a.created);
+
+        varianceSelect.innerHTML = `<option value="">Select a variance…</option>` + 
+          items.map(it=>`<option value="${it.id}">${it.label}</option>`).join('');
+
+        // Auto-select most recent (optional—comment out if you don't want this)
+        if(items.length){
+          varianceSelect.value = items[0].id;
+          loadVariance(items[0].id);
+        }
+      }catch(e){
+        console.error('list variances', e);
+        alert('Failed to load variances.');
+      }
+    });
+
+    varianceSelect.addEventListener('change', (e)=>{
+      const id = e.target.value;
+      if(!id){ clearDots(); txtArena.textContent='—'; txtPad.textContent='—'; txtEmp.textContent='—'; doorEl.style.display='none'; drawRink(); return; }
+      loadVariance(id);
+    });
+
+    async function loadVariance(varianceId){
+      if(!state.uid) return;
+      try{
+        const docRef = fsMod.doc(variancesCol(state.uid), varianceId);
+        const snap = await fsMod.getDoc(docRef);
+        if(!snap.exists()){ alert('Variance not found.'); return; }
+        const d = snap.data();
+
+        // Header text
+        txtArena.textContent = d.rinkName || '—';
+        txtPad.textContent   = d.padName  || '—';
+        txtEmp.textContent   = d.employeeName || '—';
+
+        // Canvas hints & door
+        state.centerY = Number.isFinite(d.centerY) ? d.centerY : 0.5;
+        if(Number.isFinite(d.imgW)) state.naturalW = d.imgW;
+        if(Number.isFinite(d.imgH)) state.naturalH = d.imgH;
+
+        if (d.door && Number.isFinite(d.door.edge) && Number.isFinite(d.door.t)){
+          state.doorCanon = { edge: d.door.edge|0, t: +d.door.t };
+          doorEl.style.display = 'flex';
+        } else {
+          state.doorCanon = { edge:0, t:0.5 };
+          doorEl.style.display = 'none';
+        }
+
+        // Readings
+        state.readings = Array.isArray(d.readings) ? d.readings.map(r=>({
+          key: r.key, value: r.value, u:+r.u, v:+r.v
+        })) : [];
+
+        applyLayout(); // redraw + position door and dots/labels
+      }catch(e){
+        console.error('load variance', e);
+        alert('Failed to load variance.');
+      }
+    }
+
+  } catch (err){
+    console.error('firebase import', err);
+    // Page still usable for viewing static UI.
+  }
+})();
+</script>
+</body>
+</html>
