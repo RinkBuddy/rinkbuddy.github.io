@@ -19,13 +19,11 @@
   body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
   .wrap{max-width:1000px;margin:24px auto;padding:0 18px}
 
-  /* Header */
   .row{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
   .home{appearance:none;border:0;border-radius:999px;padding:10px 16px;font-weight:800;
         background:#0d1a3a;color:#fff;box-shadow:0 6px 14px var(--shadow);cursor:pointer}
   .title{font-family:"Russo One",system-ui;margin:10px 0 22px;font-size:22px}
 
-  /* Panels */
   .panel{flex:1 1 300px}
   .section-title{font-family:"Russo One",system-ui;letter-spacing:.5px;margin:16px 0 6px}
   .hint{color:var(--muted);font-size:13px;margin:4px 0 0}
@@ -82,7 +80,7 @@
         <p class="hint">Tap an arena to select it. Pads list shows pads only for the selected arena.</p>
       </section>
 
-      <!-- Pads (children of selected arena) -->
+      <!-- Pads -->
       <section class="panel" aria-labelledby="hPads">
         <h2 id="hPads" class="section-title">Pads:</h2>
         <div class="adder">
@@ -93,7 +91,7 @@
         <p id="padHint" class="hint">Select an arena first to add/view pads.</p>
       </section>
 
-      <!-- Employees (independent) -->
+      <!-- Employees -->
       <section class="panel" aria-labelledby="hEmps">
         <h2 id="hEmps" class="section-title">Employees:</h2>
         <div class="adder">
@@ -106,7 +104,7 @@
   </div>
 
 <script type="module">
-/* -------- UI refs -------- */
+/* ---------- UI refs ---------- */
 const $ = (s)=>document.querySelector(s);
 const arenaInput = $('#arenaInput');
 const addArenaBtn = $('#addArenaBtn');
@@ -123,11 +121,10 @@ const empList  = $('#empList');
 
 $('#homeBtn').addEventListener('click', ()=>location.href='index.html');
 
-/* Selected arena (for pads pane) */
 let selectedArenaId = null;
 let padsUnsub = null;
 
-/* -------- Firebase -------- */
+/* ---------- Firebase ---------- */
 import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, setPersistence, browserLocalPersistence
@@ -152,20 +149,23 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 try{ await setPersistence(auth, browserLocalPersistence);}catch{}
 
-/* Firestore path helpers */
-const cleanId = (s)=> s.trim().replace(/[.#$/\[\]]/g,'·'); // safe for Firestore IDs
-const defaultsCol = (uid)=> collection(doc(db,'users',uid),'defaults');
-const arenasCol   = (uid)=> collection(defaultsCol(uid), 'arenas');
+/* ---------- Paths (with defaults/root parent doc) ---------- */
+const cleanId     = (s)=> s.trim().replace(/[.#$/\[\]]/g,'·');
+const defaultsDoc = (uid)=> doc(db, 'users', uid, 'defaults', 'root');
+
+const arenasCol   = (uid)=> collection(defaultsDoc(uid), 'arenas');
 const arenaDoc    = (uid, arenaId)=> doc(arenasCol(uid), arenaId);
+
 const padsCol     = (uid, arenaId)=> collection(arenaDoc(uid, arenaId), 'pads');
 const padDoc      = (uid, arenaId, padId)=> doc(padsCol(uid, arenaId), padId);
-const empsCol     = (uid)=> collection(defaultsCol(uid), 'employees');
+
+const empsCol     = (uid)=> collection(defaultsDoc(uid), 'employees');
 const empDoc      = (uid, empId)=> doc(empsCol(uid), empId);
 
-/* -------- Auth + live wiring -------- */
+/* ---------- Auth + create defaults if missing ---------- */
 let uid = null;
 
-onAuthStateChanged(auth, (user)=>{
+onAuthStateChanged(auth, async (user)=>{
   if(!user){
     addArenaBtn.disabled = true;
     addPadBtn.disabled   = true;
@@ -174,13 +174,23 @@ onAuthStateChanged(auth, (user)=>{
     return;
   }
   uid = user.uid;
+
+  try {
+    // ✅ Ensure the parent doc exists (idempotent)
+    await setDoc(defaultsDoc(uid), { touchedAt: serverTimestamp() }, { merge: true });
+  } catch (e) {
+    console.error('ensure defaults/root failed', e);
+    alert((e.code||'Error')+': '+(e.message||'Could not initialize defaults.'));
+    return;
+  }
+
   addArenaBtn.disabled = false;
-  addEmpBtn.disabled   = false; // pad add stays disabled until arena selected
+  addEmpBtn.disabled   = false; // pad add stays disabled until arena is selected
   bindArenaList();
   bindEmployeeList();
 });
 
-/* -------- Arenas -------- */
+/* ---------- Arenas ---------- */
 function bindArenaList(){
   if(!uid) return;
   if(padsUnsub){ padsUnsub(); padsUnsub=null; }
@@ -226,11 +236,10 @@ addArenaBtn.addEventListener('click', async ()=>{
   }
 });
 
-/* select arena -> enable pads pane & live pads list */
+/* ---------- Pads ---------- */
 function selectArena(id, chipEl){
   selectedArenaId = id;
 
-  // highlight
   [...document.querySelectorAll('.chip')].forEach(c=>c.classList.remove('selected'));
   if(chipEl) chipEl.classList.add('selected');
 
@@ -255,7 +264,6 @@ function selectArena(id, chipEl){
   });
 }
 
-/* Add Pad (failsafe: must have arena selected) */
 addPadBtn.addEventListener('click', async ()=>{
   if(!uid) return;
   if(!selectedArenaId){ alert('Select an arena first.'); return; }
@@ -271,9 +279,8 @@ addPadBtn.addEventListener('click', async ()=>{
   }
 });
 
-/* Delete arena (+cascade its pads) */
 async function confirmDeleteArena(arenaId){
-  if(!confirm(`Delete arena "${arenaId}" and all of its pads?`)) return;
+  if(!confirm(`Delete arena "${arenaId}" and all pads?`)) return;
   try{
     const snap = await getDocs(padsCol(uid, arenaId));
     const batch = writeBatch(db);
@@ -290,7 +297,6 @@ async function confirmDeleteArena(arenaId){
   }
 }
 
-/* Delete pad */
 async function confirmDeletePad(arenaId, padId){
   if(!confirm(`Delete pad "${padId}" from "${arenaId}"?`)) return;
   try{
@@ -301,7 +307,7 @@ async function confirmDeletePad(arenaId, padId){
   }
 }
 
-/* -------- Employees -------- */
+/* ---------- Employees ---------- */
 function bindEmployeeList(){
   if(!uid) return;
   onSnapshot(empsCol(uid), (snap)=>{
@@ -345,7 +351,7 @@ async function confirmDeleteEmp(empId){
   }
 }
 
-/* -------- small UI util -------- */
+/* ---------- util ---------- */
 function makeTrash(onClick){
   const b=document.createElement('button'); b.className='trash'; b.type='button';
   b.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 6h2v8h-2V9zm4 0h2v8h-2V9zM7 9h2v8H7V9z"/></svg>`;
