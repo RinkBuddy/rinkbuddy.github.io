@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rinkbuddy — Settings</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Russo+One&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg:#000; --text:#fff; --muted:#9fb0d0;
+    --blue:#0033ff; --blue-hi:#1a48ff;
+    --red:#ff2a2a; --red-hi:#ff4646;
+    --shadow:rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:24px auto;padding:0 18px}
+
+  /* Header */
+  .row{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
+  .home{appearance:none;border:0;border-radius:999px;padding:10px 16px;font-weight:800;
+        background:#0d1a3a;color:#fff;box-shadow:0 6px 14px var(--shadow);cursor:pointer}
+  .title{font-family:"Russo One",system-ui;margin:10px 0 22px;font-size:22px}
+
+  /* Panels */
+  .panel{flex:1 1 300px}
+  .label{font-weight:800;margin:10px 0 6px}
+  .adder{display:flex;gap:8px;align-items:center}
+  .adder input{
+    flex:1; min-width:140px; padding:10px 12px; border-radius:8px; border:1px solid #1f2637; background:#0c1020; color:#fff; font-weight:700;
+  }
+  .plus{
+    width:44px;height:38px;border-radius:8px;border:0;cursor:pointer;background:var(--blue);
+    color:#fff;font:900 24px/0.8 "Russo One",system-ui;display:grid;place-items:center;
+    transition:transform .04s ease; box-shadow:0 8px 18px rgba(0, 64, 255, .35);
+  }
+  .plus:active{transform:translateY(1px)}
+  .plus:disabled{opacity:.5;cursor:not-allowed}
+
+  /* List items (blue buttons with red trash) */
+  .list{margin:12px 0 24px;display:grid;gap:10px}
+  .item{display:flex;gap:8px;align-items:center}
+  .chip{
+    flex:1; display:inline-flex; align-items:center; justify-content:center;
+    background:var(--blue); border-radius:8px; padding:12px 14px; font-weight:900;
+    box-shadow:0 10px 25px rgba(0,0,0,.45), inset 0 -2px 0 rgba(255,255,255,.1);
+    cursor:pointer; user-select:none;
+  }
+  .chip:hover{background:var(--blue-hi)}
+  .chip.selected{outline:3px solid #fff}
+
+  .trash{
+    width:42px;height:42px;border-radius:10px;border:0;background:var(--red);display:grid;place-items:center;cursor:pointer;
+    box-shadow:0 8px 18px rgba(255,0,0,.35);
+  }
+  .trash:hover{background:var(--red-hi)}
+  .trash svg{width:22px;height:22px;fill:#fff}
+
+  .hint{color:var(--muted);font-size:13px;margin:4px 0 0}
+  .section-title{font-family:"Russo One",system-ui;letter-spacing:.5px;margin:16px 0 6px}
+
+  @media (max-width:780px){
+    .row{flex-direction:column}
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <button id="homeBtn" class="home">Home</button>
+    <h1 class="title">Settings</h1>
+
+    <div class="row">
+      <!-- Arenas -->
+      <section class="panel" aria-labelledby="hArenas">
+        <h2 id="hArenas" class="section-title">Arenas:</h2>
+        <div class="adder">
+          <input id="arenaInput" placeholder="Add arena…" />
+          <button id="addArenaBtn" class="plus" title="Add arena">+</button>
+        </div>
+        <div id="arenaList" class="list" aria-live="polite"></div>
+        <p class="hint">Tap an arena to select it. Pads list shows pads only for the selected arena.</p>
+      </section>
+
+      <!-- Pads (children of selected arena) -->
+      <section class="panel" aria-labelledby="hPads">
+        <h2 id="hPads" class="section-title">Pads:</h2>
+        <div class="adder">
+          <input id="padInput" placeholder="Add pad…" disabled />
+          <button id="addPadBtn" class="plus" title="Add pad" disabled>+</button>
+        </div>
+        <div id="padList" class="list" aria-live="polite"></div>
+        <p id="padHint" class="hint">Select an arena first to add/view pads.</p>
+      </section>
+
+      <!-- Employees (independent) -->
+      <section class="panel" aria-labelledby="hEmps">
+        <h2 id="hEmps" class="section-title">Employees:</h2>
+        <div class="adder">
+          <input id="empInput" placeholder="Add employee…" />
+          <button id="addEmpBtn" class="plus" title="Add employee">+</button>
+        </div>
+        <div id="empList" class="list" aria-live="polite"></div>
+      </section>
+    </div>
+  </div>
+
+<script type="module">
+/* -------- UI helpers -------- */
+const $ = (s)=>document.querySelector(s);
+const arenaInput = $('#arenaInput');
+const addArenaBtn = $('#addArenaBtn');
+const arenaList  = $('#arenaList');
+
+const padInput = $('#padInput');
+const addPadBtn = $('#addPadBtn');
+const padList  = $('#padList');
+const padHint  = $('#padHint');
+
+const empInput = $('#empInput');
+const addEmpBtn = $('#addEmpBtn');
+const empList  = $('#empList');
+
+$('#homeBtn').addEventListener('click', ()=>location.href='index.html');
+
+/* Selected arena (for pads pane) */
+let selectedArenaId = null;
+let padsUnsub = null;
+
+/* -------- Firebase -------- */
+import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
+import {
+  getAuth, onAuthStateChanged, setPersistence, browserLocalPersistence
+} from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
+import {
+  getFirestore, doc, collection, setDoc, deleteDoc, getDocs, writeBatch,
+  onSnapshot, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey:"AIzaSyCYlPYVyeUMpcr8qgUTifHJiOCayhh7QCQ",
+  authDomain:"rink-buddy-6f6ed.firebaseapp.com",
+  projectId:"rink-buddy-6f6ed",
+  storageBucket:"rink-buddy-6f6ed.appspot.com",
+  messagingSenderId:"1096930052063",
+  appId:"1:1096930052063:web:6b97608f1cdd3f5111666a",
+  measurementId:"G-7HPRJ6T9LD"
+};
+
+const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+try{ await setPersistence(auth, browserLocalPersistence);}catch{}
+
+/* Firestore path helpers */
+const cleanId = (s)=> s.trim().replace(/[.#$/\[\]]/g,'·'); // safe for Firestore IDs
+const defaultsCol = (uid)=> collection(doc(db,'users',uid),'defaults');
+const arenasCol   = (uid)=> collection(defaultsCol(uid), 'arenas');
+const arenaDoc    = (uid, arenaId)=> doc(arenasCol(uid), arenaId);
+const padsCol     = (uid, arenaId)=> collection(arenaDoc(uid, arenaId), 'pads');
+const padDoc      = (uid, arenaId, padId)=> doc(padsCol(uid, arenaId), padId);
+const empsCol     = (uid)=> collection(defaultsCol(uid), 'employees');
+const empDoc      = (uid, empId)=> doc(empsCol(uid), empId);
+
+/* -------- Auth + live wiring -------- */
+let uid = null;
+
+onAuthStateChanged(auth, (user)=>{
+  if(!user){
+    alert('Please sign in on Home first.'); 
+    return;
+  }
+  uid = user.uid;
+  bindArenaList();
+  bindEmployeeList();
+});
+
+/* -------- Arenas -------- */
+function bindArenaList(){
+  if(!uid) return;
+  if(padsUnsub){ padsUnsub(); padsUnsub=null; }
+  selectedArenaId = null;
+  padInput.disabled = true; addPadBtn.disabled = true;
+  padList.innerHTML=''; padHint.textContent='Select an arena first to add/view pads.';
+
+  onSnapshot(arenasCol(uid), (snap)=>{
+    arenaList.innerHTML='';
+    const docs = snap.docs.sort((a,b)=>a.id.localeCompare(b.id));
+    docs.forEach(d=>{
+      const id = d.id;
+      const row = document.createElement('div'); row.className='item';
+
+      const chip = document.createElement('button');
+      chip.className='chip' + (id===selectedArenaId?' selected':'');
+      chip.textContent = id;
+      chip.addEventListener('click', ()=>selectArena(id, chip));
+      row.appendChild(chip);
+
+      const del = makeTrash(()=>{
+        confirmDeleteArena(id);
+      });
+      row.appendChild(del);
+
+      arenaList.appendChild(row);
+    });
+  });
+}
+
+addArenaBtn.addEventListener('click', async ()=>{
+  if(!uid) return;
+  const name = arenaInput.value.trim();
+  if(!name) return;
+  const id = cleanId(name);
+  try{
+    await setDoc(arenaDoc(uid, id), { createdAt: serverTimestamp() }, { merge:true });
+    arenaInput.value='';
+  }catch(e){ console.error(e); alert('Failed to add arena.'); }
+});
+
+/* select arena -> enable pads pane & live pads list */
+function selectArena(id, chipEl){
+  selectedArenaId = id;
+
+  // highlight
+  [...document.querySelectorAll('.chip')].forEach(c=>c.classList.remove('selected'));
+  if(chipEl) chipEl.classList.add('selected');
+
+  padInput.disabled = false; addPadBtn.disabled = false;
+  padHint.textContent = `Pads for: ${id}`;
+
+  if(padsUnsub) padsUnsub();
+  padsUnsub = onSnapshot(padsCol(uid, id), (snap)=>{
+    padList.innerHTML='';
+    const docs = snap.docs.sort((a,b)=>a.id.localeCompare(b.id));
+    docs.forEach(d=>{
+      const row = document.createElement('div'); row.className='item';
+      const chip = document.createElement('div'); chip.className='chip'; chip.textContent=d.id;
+      row.appendChild(chip);
+      const del = makeTrash(()=>confirmDeletePad(id, d.id));
+      row.appendChild(del);
+      padList.appendChild(row);
+    });
+  });
+}
+
+/* Add Pad (failsafe: must have arena selected) */
+addPadBtn.addEventListener('click', async ()=>{
+  if(!uid) return;
+  if(!selectedArenaId){ alert('Select an arena first.'); return; }
+  const name = padInput.value.trim();
+  if(!name) return;
+  const id = cleanId(name);
+  try{
+    await setDoc(padDoc(uid, selectedArenaId, id), { createdAt: serverTimestamp() }, { merge:true });
+    padInput.value='';
+  }catch(e){ console.error(e); alert('Failed to add pad.'); }
+});
+
+/* Delete arena (+cascade its pads) */
+async function confirmDeleteArena(arenaId){
+  if(!confirm(`Delete arena "${arenaId}" and all of its pads?`)) return;
+  try{
+    // delete pads subcollection
+    const snap = await getDocs(padsCol(uid, arenaId));
+    const batch = writeBatch(db);
+    snap.forEach(p=> batch.delete(p.ref));
+    batch.delete(arenaDoc(uid, arenaId));
+    await batch.commit();
+    if(selectedArenaId===arenaId){ selectedArenaId=null; padList.innerHTML=''; padInput.disabled=true; addPadBtn.disabled=true; padHint.textContent='Select an arena first to add/view pads.'; }
+  }catch(e){ console.error(e); alert('Failed to delete arena.'); }
+}
+
+/* Delete pad */
+async function confirmDeletePad(arenaId, padId){
+  if(!confirm(`Delete pad "${padId}" from "${arenaId}"?`)) return;
+  try{
+    await deleteDoc(padDoc(uid, arenaId, padId));
+  }catch(e){ console.error(e); alert('Failed to delete pad.'); }
+}
+
+/* -------- Employees -------- */
+function bindEmployeeList(){
+  if(!uid) return;
+  onSnapshot(empsCol(uid), (snap)=>{
+    empList.innerHTML='';
+    const docs = snap.docs.sort((a,b)=>a.id.localeCompare(b.id));
+    docs.forEach(d=>{
+      const row = document.createElement('div'); row.className='item';
+      const chip = document.createElement('div'); chip.className='chip'; chip.textContent=d.id;
+      row.appendChild(chip);
+      const del = makeTrash(()=>confirmDeleteEmp(d.id));
+      row.appendChild(del);
+      empList.appendChild(row);
+    });
+  });
+}
+
+addEmpBtn.addEventListener('click', async ()=>{
+  if(!uid) return;
+  const name = empInput.value.trim();
+  if(!name) return;
+  const id = cleanId(name);
+  try{
+    await setDoc(empDoc(uid, id), { createdAt: serverTimestamp() }, { merge:true });
+    empInput.value='';
+  }catch(e){ console.error(e); alert('Failed to add employee.'); }
+});
+
+async function confirmDeleteEmp(empId){
+  if(!confirm(`Delete employee "${empId}"?`)) return;
+  try{ await deleteDoc(empDoc(uid, empId)); }
+  catch(e){ console.error(e); alert('Failed to delete employee.'); }
+}
+
+/* -------- small UI util -------- */
+function makeTrash(onClick){
+  const b=document.createElement('button'); b.className='trash'; b.type='button';
+  b.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 6h2v8h-2V9zm4 0h2v8h-2V9zM7 9h2v8H7V9z"/></svg>`;
+  b.addEventListener('click', onClick);
+  return b;
+}
+</script>
+</body>
+</html>
