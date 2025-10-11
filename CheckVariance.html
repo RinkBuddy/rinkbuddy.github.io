@@ -110,13 +110,13 @@
   <div class="left">
     <button id="homeBtn" class="btn secondary">Home</button>
     <label>Rink Name:
-      <select id="selRink"><option>Scotiabank Arena</option></select>
+      <select id="selRink"><option>Loading…</option></select>
     </label>
     <label>Pad Name:
-      <select id="selPad"><option>North</option></select>
+      <select id="selPad"><option>—</option></select>
     </label>
     <label>Employee Name:
-      <select id="selEmp"><option>Bob</option></select>
+      <select id="selEmp"><option>Loading…</option></select>
     </label>
   </div>
 
@@ -462,11 +462,37 @@ let auth=null, db=null;
     db   = fsMod.getFirestore(app);
     try { await authMod.setPersistence(auth, authMod.browserLocalPersistence); } catch {}
 
+    /* ---------- Firestore path helpers for defaults ---------- */
+    const defaultsDoc = (uid)=> fsMod.doc(db, 'users', uid, 'defaults', 'root');
+    const arenasCol   = (uid)=> fsMod.collection(defaultsDoc(uid), 'arenas');
+    const arenaDoc    = (uid, arenaId)=> fsMod.doc(arenasCol(uid), arenaId);
+    const padsCol     = (uid, arenaId)=> fsMod.collection(arenaDoc(uid, arenaId), 'pads');
+    const employeesCol= (uid)=> fsMod.collection(defaultsDoc(uid), 'employees');
+
+    let arenaUnsub=null, padsUnsub=null, empUnsub=null;
+
+    function bindPads(arenaId){
+      if(padsUnsub) { padsUnsub(); padsUnsub=null; }
+      if(!arenaId){ selPad.innerHTML = `<option>—</option>`; return; }
+      padsUnsub = fsMod.onSnapshot(padsCol(state.uid, arenaId), (snap)=>{
+        const names = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
+        selPad.innerHTML = names.length
+          ? names.map(n=>`<option>${n}</option>`).join('')
+          : `<option>—</option>`;
+      }, (e)=>console.error('pads onSnapshot', e));
+    }
+
+    // When signed in: load templates + defaults
     authMod.onAuthStateChanged(auth, async (user)=>{
       if (!user) return;
       state.uid = user.uid;
 
-      // load template names
+      // Ensure defaults/root exists (no-op if already there)
+      try{
+        await fsMod.setDoc(defaultsDoc(state.uid), { touchedAt: fsMod.serverTimestamp() }, { merge:true });
+      }catch(e){ console.warn('ensure defaults/root failed', e); }
+
+      // ---- Templates list ----
       try{
         const usersDoc = fsMod.doc(db, 'users', state.uid);
         const tplCol   = fsMod.collection(usersDoc, 'templates');
@@ -475,6 +501,31 @@ let auth=null, db=null;
         templateSelect.innerHTML = `<option value="">Select a template…</option>`;
         state.allNames.forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=n; templateSelect.appendChild(o); });
       }catch(e){ console.error('template list', e); }
+
+      // ---- Defaults: Arenas (live) ----
+      if (arenaUnsub) arenaUnsub();
+      arenaUnsub = fsMod.onSnapshot(arenasCol(state.uid), (snap)=>{
+        const prev = selRink.value;
+        const names = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
+        selRink.innerHTML = names.length
+          ? names.map(n=>`<option>${n}</option>`).join('')
+          : `<option>—</option>`;
+        // Keep previous selection if still present, else take first
+        if (names.includes(prev)) selRink.value = prev;
+        bindPads(selRink.value && selRink.value !== '—' ? selRink.value : null);
+      }, (e)=>console.error('arenas onSnapshot', e));
+
+      // Change handler to refetch pads for selected arena
+      selRink.addEventListener('change', (e)=> bindPads(e.target.value));
+
+      // ---- Defaults: Employees (live) ----
+      if (empUnsub) empUnsub();
+      empUnsub = fsMod.onSnapshot(employeesCol(state.uid), (snap)=>{
+        const names = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
+        selEmp.innerHTML = names.length
+          ? names.map(n=>`<option>${n}</option>`).join('')
+          : `<option>—</option>`;
+      }, (e)=>console.error('employees onSnapshot', e));
     });
 
     // template picker
