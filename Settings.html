@@ -11,21 +11,44 @@
   :root{
     --bg:#000; --text:#fff; --muted:#9fb0d0;
     --blue:#0033ff; --blue-hi:#1a48ff;
-    --red:#ff2a2a; --red-hi:#ff4646;
     --shadow:rgba(0,0,0,.35);
   }
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-  .wrap{max-width:1000px;margin:24px auto;padding:0 18px}
+  .wrap{max-width:1100px;margin:24px auto;padding:0 18px}
 
-  .row{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
   .home{appearance:none;border:0;border-radius:999px;padding:10px 16px;font-weight:800;
         background:#0d1a3a;color:#fff;box-shadow:0 6px 14px var(--shadow);cursor:pointer}
   .title{font-family:"Russo One",system-ui;margin:10px 0 22px;font-size:22px}
 
-  .panel{flex:1 1 300px}
-  .section-title{font-family:"Russo One",system-ui;letter-spacing:.5px;margin:16px 0 6px}
+  /* Grid layout: Arenas (top-left), Employees (bottom-left), Pads (right) */
+  .grid{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "arenas pads"
+      "employees pads";
+    gap:28px;
+    align-items:start;
+  }
+  @media (max-width:900px){
+    .grid{
+      grid-template-columns: 1fr;
+      grid-template-areas:
+        "arenas"
+        "pads"
+        "employees";
+    }
+  }
+
+  .panel{background:transparent}
+  #sec-arenas{grid-area:arenas}
+  #sec-pads{grid-area:pads}
+  #sec-emps{grid-area:employees}
+
+  .section-title{font-family:"Russo One",system-ui;letter-spacing:.5px;margin:16px 0 6px;color:#fff}
+
   .hint{color:var(--muted);font-size:13px;margin:4px 0 0}
 
   .adder{display:flex;gap:8px;align-items:center}
@@ -42,25 +65,24 @@
 
   .list{margin:12px 0 24px;display:grid;gap:10px}
   .item{display:flex;gap:8px;align-items:center}
+
+  /* Arena/Pad/Employee chips — FORCE text white */
   .chip{
     flex:1; display:inline-flex; align-items:center; justify-content:center;
-    background:var(--blue); border-radius:8px; padding:12px 14px; font-weight:900;
+    background:var(--blue); border-radius:8px; padding:12px 14px; font-weight:900; color:#fff;
     box-shadow:0 10px 25px rgba(0,0,0,.45), inset 0 -2px 0 rgba(255,255,255,.1);
-    cursor:pointer; user-select:none;
+    cursor:pointer; user-select:none; text-shadow:0 1px 0 rgba(0,0,0,.45);
   }
   .chip:hover{background:var(--blue-hi)}
   .chip.selected{outline:3px solid #fff}
 
+  /* Delete button uses your Delete.png */
   .trash{
-    width:42px;height:42px;border-radius:10px;border:0;background:var(--red);display:grid;place-items:center;cursor:pointer;
-    box-shadow:0 8px 18px rgba(255,0,0,.35);
+    width:42px;height:42px;border-radius:10px;border:0;cursor:pointer;
+    background:transparent url('Delete.png') center/contain no-repeat;
+    box-shadow:none;
   }
-  .trash:hover{background:var(--red-hi)}
-  .trash svg{width:22px;height:22px;fill:#fff}
-
-  @media (max-width:780px){
-    .row{flex-direction:column}
-  }
+  .trash:focus{outline:2px solid #4da3ff; outline-offset:2px}
 </style>
 </head>
 <body>
@@ -68,9 +90,9 @@
     <button id="homeBtn" class="home">Home</button>
     <h1 class="title">Settings</h1>
 
-    <div class="row">
-      <!-- Arenas -->
-      <section class="panel" aria-labelledby="hArenas">
+    <div class="grid">
+      <!-- Arenas (top-left) -->
+      <section id="sec-arenas" class="panel" aria-labelledby="hArenas">
         <h2 id="hArenas" class="section-title">Arenas:</h2>
         <div class="adder">
           <input id="arenaInput" placeholder="Add arena…" />
@@ -80,8 +102,8 @@
         <p class="hint">Tap an arena to select it. Pads list shows pads only for the selected arena.</p>
       </section>
 
-      <!-- Pads -->
-      <section class="panel" aria-labelledby="hPads">
+      <!-- Pads (right side) -->
+      <section id="sec-pads" class="panel" aria-labelledby="hPads">
         <h2 id="hPads" class="section-title">Pads:</h2>
         <div class="adder">
           <input id="padInput" placeholder="Add pad…" disabled />
@@ -91,8 +113,8 @@
         <p id="padHint" class="hint">Select an arena first to add/view pads.</p>
       </section>
 
-      <!-- Employees -->
-      <section class="panel" aria-labelledby="hEmps">
+      <!-- Employees (bottom-left) -->
+      <section id="sec-emps" class="panel" aria-labelledby="hEmps">
         <h2 id="hEmps" class="section-title">Employees:</h2>
         <div class="adder">
           <input id="empInput" placeholder="Add employee…" />
@@ -162,7 +184,14 @@ const padDoc      = (uid, arenaId, padId)=> doc(padsCol(uid, arenaId), padId);
 const empsCol     = (uid)=> collection(defaultsDoc(uid), 'employees');
 const empDoc      = (uid, empId)=> doc(empsCol(uid), empId);
 
-/* ---------- Auth + create defaults if missing ---------- */
+/* ---------- Ensure defaults/root exists ---------- */
+async function ensureDefaultsRoot(uid){
+  const ref = defaultsDoc(uid);
+  await setDoc(ref, { touchedAt: serverTimestamp() }, { merge: true });
+  return ref;
+}
+
+/* ---------- Auth + boot ---------- */
 let uid = null;
 
 onAuthStateChanged(auth, async (user)=>{
@@ -175,17 +204,15 @@ onAuthStateChanged(auth, async (user)=>{
   }
   uid = user.uid;
 
-  try {
-    // ✅ Ensure the parent doc exists (idempotent)
-    await setDoc(defaultsDoc(uid), { touchedAt: serverTimestamp() }, { merge: true });
-  } catch (e) {
+  try { await ensureDefaultsRoot(uid); }
+  catch(e){
     console.error('ensure defaults/root failed', e);
     alert((e.code||'Error')+': '+(e.message||'Could not initialize defaults.'));
     return;
   }
 
   addArenaBtn.disabled = false;
-  addEmpBtn.disabled   = false; // pad add stays disabled until arena is selected
+  addEmpBtn.disabled   = false; // pad add stays disabled until an arena is selected
   bindArenaList();
   bindEmployeeList();
 });
@@ -207,7 +234,7 @@ function bindArenaList(){
 
       const chip = document.createElement('button');
       chip.className='chip' + (id===selectedArenaId?' selected':'');
-      chip.textContent = id;
+      chip.textContent = id; // stays white due to CSS
       chip.addEventListener('click', ()=>selectArena(id, chip));
       row.appendChild(chip);
 
@@ -354,7 +381,7 @@ async function confirmDeleteEmp(empId){
 /* ---------- util ---------- */
 function makeTrash(onClick){
   const b=document.createElement('button'); b.className='trash'; b.type='button';
-  b.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 6h2v8h-2V9zm4 0h2v8h-2V9zM7 9h2v8H7V9z"/></svg>`;
+  b.setAttribute('aria-label','Delete');
   b.addEventListener('click', onClick);
   return b;
 }
