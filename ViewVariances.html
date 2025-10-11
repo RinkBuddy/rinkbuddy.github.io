@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Rinkbuddy — View Variance</title>
 <style>
-  :root { --btn:#1f7aff; --muted:#9fb0d0; --dot-size:10px; --hdrH:64px; --blue:#4da3ff; --gray:#141824; }
+  :root {
+    --btn:#1f7aff; --muted:#9fb0d0; --dot-size:10px; --hdrH:64px; --blue:#4da3ff;
+    --label-fontpx:12px; /* dynamically set in JS based on canvas size */
+  }
   *{box-sizing:border-box}
   html,body{height:100%}
   body{ margin:0; background:#000; color:#e9eef9; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
@@ -40,18 +43,18 @@
   }
   canvas#rink { display:block; width:100%; height:100%; }
 
-  /* Tiny dots for viewing */
+  /* Blue dots: solid, no outline, half-size (size set in JS via --dot-size) */
   .dot{
     position:absolute; transform:translate(-50%,-50%); width:var(--dot-size); height:var(--dot-size);
-    border-radius:999px; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.3);
-    background:#bfc8d9;  /* light so it shows on rink */
+    border-radius:999px; border:0; background:var(--blue);
+    box-shadow:0 2px 6px rgba(0,0,0,.25);
     user-select:none; pointer-events:none;
   }
 
-  /* Value labels near dots */
+  /* Value labels near dots, font size is dynamic via --label-fontpx */
   .vlabel{
     position:absolute; transform:translate(-50%,-100%); /* default: above */
-    color:#000; font-weight:900; font-size:12px; line-height:1; white-space:nowrap;
+    color:#000; font-weight:900; font-size:var(--label-fontpx); line-height:1; white-space:nowrap;
     user-select:none; text-shadow:none; pointer-events:none;
   }
   .vlabel.below{ transform:translate(-50%, 0%); } /* if above would clip */
@@ -183,12 +186,20 @@ function applyLayout(){
   let w=availW, h=w/aspect; if(h>availH){ h=availH; w=h*aspect; }
   setCanvasSize(w,h);
 
-  // Tiny dots
-  const d=Math.max(2, Math.round(Math.min(canvas.width, canvas.height)*0.03));
+  /* --- DOT SIZE: half of previous (was ~3% of min side) => ~1.5% --- */
+  const minSide = Math.min(canvas.width, canvas.height);
+  const d = Math.max(2, Math.round(minSide * 0.015));
   document.documentElement.style.setProperty('--dot-size', d+'px');
 
-  // Door size (match template math)
+  /* --- LABEL FONT SIZE: percent of rink long side (bigger on desktop) --- */
   const longSide = Math.max(canvas.width, canvas.height);
+  // Calibrate: mobile ~12-14px feels good; desktop scale more
+  const labelPx = state.mobile
+    ? Math.max(12, Math.round(longSide * 0.018))  // mobile keeps similar size
+    : Math.max(14, Math.round(longSide * 0.024)); // desktop slightly larger
+  document.documentElement.style.setProperty('--label-fontpx', labelPx + 'px');
+
+  // Door size (match template math)
   state.doorLen   = Math.round(longSide * 0.20 * 0.6);
   state.doorThick = Math.max(8, Math.round(state.doorLen * 0.16));
   doorEl.style.width = state.doorLen + 'px';
@@ -219,11 +230,16 @@ function clearDots(){
 }
 function renderDots(){
   clearDots();
-  // Render tiny dots + labels for current readings
-  const labelOffset = Math.max(10, Math.round(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dot-size'))*1.8));
+  const styles = getComputedStyle(document.documentElement);
+  const dotPx = parseFloat(styles.getPropertyValue('--dot-size')) || 10;
+  const labelPx = parseFloat(styles.getPropertyValue('--label-fontpx')) || 12;
+  // Offset to keep label readable and unclipped
+  const labelOffsetPx = Math.max(10, Math.round(Math.max(labelPx * 0.9, dotPx * 1.2)));
+
   state.readings.forEach(r=>{
     const pos=uvToCanvas(r.u, r.v);
-    // Dot
+
+    // Dot (blue, solid, no outline)
     const dot=document.createElement('div');
     dot.className='dot';
     dot.style.left=(pos.x/canvas.width*100)+'%';
@@ -234,10 +250,11 @@ function renderDots(){
     const lab=document.createElement('div');
     lab.className='vlabel';
     lab.textContent = String(r.value);
-    // Position calculation in px (use transform class only for above/below)
+
     const pxX = pos.x, pxY = pos.y;
-    const willClipTop = (pxY - labelOffset) < 0;
+    const willClipTop = (pxY - labelOffsetPx) < 0;
     if (willClipTop) lab.classList.add('below');
+
     lab.style.left = (pxX / canvas.width * 100) + '%';
     lab.style.top  = (pxY / canvas.height * 100) + '%';
     view.appendChild(lab);
@@ -336,13 +353,10 @@ let auth=null, db=null;
     const fmtVarianceName = (doc) =>{
       const d = doc.data()||{};
       let ts = d.createdAt?.toDate?.() || null;
-      // Fallback if createdAt missing
       if(!ts){ ts = new Date(); }
       const fmt = new Intl.DateTimeFormat('en-US', { month:'short', day:'2-digit', year:'numeric', hour:'numeric', minute:'2-digit' });
-      // e.g., "Sep 21, 2025, 5:30 PM" -> massage to "Sep 21 2025 5:30"
-      let s = fmt.format(ts).replace(',', '').replace(',', '');
-      // remove AM/PM to match your example
-      s = s.replace(/\s?(AM|PM)$/i,'');
+      let s = fmt.format(ts).replace(',', '').replace(',', ''); // "Sep 21 2025 5:30 PM"
+      s = s.replace(/\s?(AM|PM)$/i,''); // drop AM/PM to match your example
       return `${s} - ${d.rinkName||'—'} - ${d.padName||'—'}`;
     };
 
@@ -361,10 +375,9 @@ let auth=null, db=null;
           })
           .sort((a,b)=> b.created - a.created);
 
-        varianceSelect.innerHTML = `<option value="">Select a variance…</option>` + 
+        varianceSelect.innerHTML = `<option value="">Select a variance…</option>` +
           items.map(it=>`<option value="${it.id}">${it.label}</option>`).join('');
 
-        // Auto-select most recent (optional—comment out if you don't want this)
         if(items.length){
           varianceSelect.value = items[0].id;
           loadVariance(items[0].id);
@@ -377,7 +390,11 @@ let auth=null, db=null;
 
     varianceSelect.addEventListener('change', (e)=>{
       const id = e.target.value;
-      if(!id){ clearDots(); txtArena.textContent='—'; txtPad.textContent='—'; txtEmp.textContent='—'; doorEl.style.display='none'; drawRink(); return; }
+      if(!id){
+        clearDots();
+        txtArena.textContent='—'; txtPad.textContent='—'; txtEmp.textContent='—';
+        doorEl.style.display='none'; drawRink(); return;
+      }
       loadVariance(id);
     });
 
@@ -412,7 +429,7 @@ let auth=null, db=null;
           key: r.key, value: r.value, u:+r.u, v:+r.v
         })) : [];
 
-        applyLayout(); // redraw + position door and dots/labels
+        applyLayout(); // redraw + dots/labels with new sizing
       }catch(e){
         console.error('load variance', e);
         alert('Failed to load variance.');
