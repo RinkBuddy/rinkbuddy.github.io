@@ -27,7 +27,9 @@
 
   /* Panels */
   .panel{flex:1 1 300px}
-  .label{font-weight:800;margin:10px 0 6px}
+  .section-title{font-family:"Russo One",system-ui;letter-spacing:.5px;margin:16px 0 6px}
+  .hint{color:var(--muted);font-size:13px;margin:4px 0 0}
+
   .adder{display:flex;gap:8px;align-items:center}
   .adder input{
     flex:1; min-width:140px; padding:10px 12px; border-radius:8px; border:1px solid #1f2637; background:#0c1020; color:#fff; font-weight:700;
@@ -40,7 +42,6 @@
   .plus:active{transform:translateY(1px)}
   .plus:disabled{opacity:.5;cursor:not-allowed}
 
-  /* List items (blue buttons with red trash) */
   .list{margin:12px 0 24px;display:grid;gap:10px}
   .item{display:flex;gap:8px;align-items:center}
   .chip{
@@ -59,9 +60,6 @@
   .trash:hover{background:var(--red-hi)}
   .trash svg{width:22px;height:22px;fill:#fff}
 
-  .hint{color:var(--muted);font-size:13px;margin:4px 0 0}
-  .section-title{font-family:"Russo One",system-ui;letter-spacing:.5px;margin:16px 0 6px}
-
   @media (max-width:780px){
     .row{flex-direction:column}
   }
@@ -78,7 +76,7 @@
         <h2 id="hArenas" class="section-title">Arenas:</h2>
         <div class="adder">
           <input id="arenaInput" placeholder="Add arena…" />
-          <button id="addArenaBtn" class="plus" title="Add arena">+</button>
+          <button id="addArenaBtn" class="plus" title="Add arena" disabled>+</button>
         </div>
         <div id="arenaList" class="list" aria-live="polite"></div>
         <p class="hint">Tap an arena to select it. Pads list shows pads only for the selected arena.</p>
@@ -100,7 +98,7 @@
         <h2 id="hEmps" class="section-title">Employees:</h2>
         <div class="adder">
           <input id="empInput" placeholder="Add employee…" />
-          <button id="addEmpBtn" class="plus" title="Add employee">+</button>
+          <button id="addEmpBtn" class="plus" title="Add employee" disabled>+</button>
         </div>
         <div id="empList" class="list" aria-live="polite"></div>
       </section>
@@ -108,7 +106,7 @@
   </div>
 
 <script type="module">
-/* -------- UI helpers -------- */
+/* -------- UI refs -------- */
 const $ = (s)=>document.querySelector(s);
 const arenaInput = $('#arenaInput');
 const addArenaBtn = $('#addArenaBtn');
@@ -169,10 +167,15 @@ let uid = null;
 
 onAuthStateChanged(auth, (user)=>{
   if(!user){
-    alert('Please sign in on Home first.'); 
+    addArenaBtn.disabled = true;
+    addPadBtn.disabled   = true;
+    addEmpBtn.disabled   = true;
+    alert('Please sign in first on Home.');
     return;
   }
   uid = user.uid;
+  addArenaBtn.disabled = false;
+  addEmpBtn.disabled   = false; // pad add stays disabled until arena selected
   bindArenaList();
   bindEmployeeList();
 });
@@ -198,13 +201,14 @@ function bindArenaList(){
       chip.addEventListener('click', ()=>selectArena(id, chip));
       row.appendChild(chip);
 
-      const del = makeTrash(()=>{
-        confirmDeleteArena(id);
-      });
+      const del = makeTrash(()=>confirmDeleteArena(id));
       row.appendChild(del);
 
       arenaList.appendChild(row);
     });
+  }, (e)=>{
+    console.error('arenas onSnapshot error', e);
+    alert((e.code||'Error')+': '+(e.message||'Failed to load arenas.'));
   });
 }
 
@@ -216,7 +220,10 @@ addArenaBtn.addEventListener('click', async ()=>{
   try{
     await setDoc(arenaDoc(uid, id), { createdAt: serverTimestamp() }, { merge:true });
     arenaInput.value='';
-  }catch(e){ console.error(e); alert('Failed to add arena.'); }
+  }catch(e){
+    console.error('add arena failed', e);
+    alert((e.code || 'Error') + ': ' + (e.message || 'Failed to add arena.'));
+  }
 });
 
 /* select arena -> enable pads pane & live pads list */
@@ -242,6 +249,9 @@ function selectArena(id, chipEl){
       row.appendChild(del);
       padList.appendChild(row);
     });
+  }, (e)=>{
+    console.error('pads onSnapshot error', e);
+    alert((e.code||'Error')+': '+(e.message||'Failed to load pads.'));
   });
 }
 
@@ -255,21 +265,29 @@ addPadBtn.addEventListener('click', async ()=>{
   try{
     await setDoc(padDoc(uid, selectedArenaId, id), { createdAt: serverTimestamp() }, { merge:true });
     padInput.value='';
-  }catch(e){ console.error(e); alert('Failed to add pad.'); }
+  }catch(e){
+    console.error('add pad failed', e);
+    alert((e.code || 'Error') + ': ' + (e.message || 'Failed to add pad.'));
+  }
 });
 
 /* Delete arena (+cascade its pads) */
 async function confirmDeleteArena(arenaId){
   if(!confirm(`Delete arena "${arenaId}" and all of its pads?`)) return;
   try{
-    // delete pads subcollection
     const snap = await getDocs(padsCol(uid, arenaId));
     const batch = writeBatch(db);
     snap.forEach(p=> batch.delete(p.ref));
     batch.delete(arenaDoc(uid, arenaId));
     await batch.commit();
-    if(selectedArenaId===arenaId){ selectedArenaId=null; padList.innerHTML=''; padInput.disabled=true; addPadBtn.disabled=true; padHint.textContent='Select an arena first to add/view pads.'; }
-  }catch(e){ console.error(e); alert('Failed to delete arena.'); }
+    if(selectedArenaId===arenaId){
+      selectedArenaId=null; padList.innerHTML='';
+      padInput.disabled=true; addPadBtn.disabled=true; padHint.textContent='Select an arena first to add/view pads.';
+    }
+  }catch(e){
+    console.error('delete arena failed', e);
+    alert((e.code||'Error')+': '+(e.message||'Failed to delete arena.'));
+  }
 }
 
 /* Delete pad */
@@ -277,7 +295,10 @@ async function confirmDeletePad(arenaId, padId){
   if(!confirm(`Delete pad "${padId}" from "${arenaId}"?`)) return;
   try{
     await deleteDoc(padDoc(uid, arenaId, padId));
-  }catch(e){ console.error(e); alert('Failed to delete pad.'); }
+  }catch(e){
+    console.error('delete pad failed', e);
+    alert((e.code||'Error')+': '+(e.message||'Failed to delete pad.'));
+  }
 }
 
 /* -------- Employees -------- */
@@ -294,6 +315,9 @@ function bindEmployeeList(){
       row.appendChild(del);
       empList.appendChild(row);
     });
+  }, (e)=>{
+    console.error('employees onSnapshot error', e);
+    alert((e.code||'Error')+': '+(e.message||'Failed to load employees.'));
   });
 }
 
@@ -305,13 +329,20 @@ addEmpBtn.addEventListener('click', async ()=>{
   try{
     await setDoc(empDoc(uid, id), { createdAt: serverTimestamp() }, { merge:true });
     empInput.value='';
-  }catch(e){ console.error(e); alert('Failed to add employee.'); }
+  }catch(e){
+    console.error('add employee failed', e);
+    alert((e.code || 'Error') + ': ' + (e.message || 'Failed to add employee.'));
+  }
 });
 
 async function confirmDeleteEmp(empId){
   if(!confirm(`Delete employee "${empId}"?`)) return;
-  try{ await deleteDoc(empDoc(uid, empId)); }
-  catch(e){ console.error(e); alert('Failed to delete employee.'); }
+  try{
+    await deleteDoc(empDoc(uid, empId));
+  }catch(e){
+    console.error('delete employee failed', e);
+    alert((e.code||'Error')+': '+(e.message||'Failed to delete employee.'));
+  }
 }
 
 /* -------- small UI util -------- */
