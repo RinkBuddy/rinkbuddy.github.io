@@ -5,7 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Rinkbuddy — Check Variance</title>
 <style>
-  :root { --btn:#1f7aff; --muted:#9fb0d0; --dot-size:40px; --hdrH:64px; --blue:#4da3ff; --gray:#141824; }
+  :root {
+    --btn:#1f7aff; --muted:#9fb0d0; --hdrH:64px;
+    --blue:#4da3ff; --gray:#141824;
+
+    /* Sizes computed in JS */
+    --touch-dot:40px;    /* large tappable (gray) */
+    --tiny-dot:10px;     /* tiny blue dot like View Variance */
+    --label-fontpx:12px; /* value label size */
+  }
   *{box-sizing:border-box}
   html,body{height:100%}
   body{ margin:0; background:#000; color:#e9eef9; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
@@ -34,8 +42,7 @@
   label{ color:var(--muted); font-weight:700; display:flex; gap:8px; align-items:center }
 
   .pill{
-    display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px;
-    border:1px solid #233154;
+    display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; border:1px solid #233154;
   }
   .pill.connected{ background:#13301f; color:#95ffb5; border-color:#1d4d31; }
   .pill.disconnected{ background:#2a0e12; color:#ff9aa6; border-color:#5a1d28; }
@@ -47,16 +54,36 @@
   }
   canvas#rink { display:block; width:100%; height:100%; }
 
-  /* DOTS */
+  /* --- POINTS --- */
+  /* Large gray tappable (pre-reading) */
   .dot{
-    position:absolute; transform:translate(-50%,-50%); width:var(--dot-size); height:var(--dot-size);
-    border-radius:999px; border:2px solid #fff; box-shadow:0 4px 12px rgba(0,0,0,.4);
-    display:grid; place-items:center; color:#000; font-weight:800; user-select:none;
+    position:absolute; transform:translate(-50%,-50%);
+    width:var(--touch-dot); height:var(--touch-dot);
+    border-radius:999px; border:2px solid #fff;
+    background:var(--gray);
+    box-shadow:0 4px 12px rgba(0,0,0,.4);
+    display:block; user-select:none; cursor:pointer;
   }
-  .dot.gray{ background:var(--gray); }
-  .dot.blue{ background:var(--blue); }
 
-  /* DOOR — same look as templates, read-only here */
+  /* Tiny blue dot (post-reading) */
+  .dot.tiny{
+    width:var(--tiny-dot); height:var(--tiny-dot);
+    border:0; background:var(--blue);
+    box-shadow:0 2px 6px rgba(0,0,0,.25);
+  }
+
+  /* Value labels (clickable) */
+  .vlabel{
+    position:absolute; transform:translate(-50%,-100%); /* default: above */
+    color:#000; font-weight:900; font-size:var(--label-fontpx); line-height:1; white-space:nowrap;
+    user-select:none; text-shadow:none; cursor:pointer;
+    /* better legibility on busy ice */
+    background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:6px;
+    border:1px solid rgba(255,255,255,0.12);
+  }
+  .vlabel.below{ transform:translate(-50%, 0%); } /* flip below if top would clip */
+
+  /* Door (read-only) */
   .door{
     position:absolute; transform-origin:50% 50%;
     background:#ffd600; color:#000; border:2px solid #000;
@@ -66,7 +93,7 @@
     box-shadow:0 6px 18px rgba(0,0,0,.35);
   }
 
-  /* Popup overlay */
+  /* Overlay */
   .overlay{ position:fixed; inset:0; display:none; place-items:center; z-index:60; }
   .overlay.show{ display:grid; }
   .overlay::before{
@@ -110,13 +137,13 @@
   <div class="left">
     <button id="homeBtn" class="btn secondary">Home</button>
     <label>Rink Name:
-      <select id="selRink"><option>Loading…</option></select>
+      <select id="selRink"><option>Scotiabank Arena</option></select>
     </label>
     <label>Pad Name:
-      <select id="selPad"><option>—</option></select>
+      <select id="selPad"><option>North</option></select>
     </label>
     <label>Employee Name:
-      <select id="selEmp"><option>Loading…</option></select>
+      <select id="selEmp"><option>Bob</option></select>
     </label>
   </div>
 
@@ -157,10 +184,10 @@
   </div>
 </div>
 
-<p class="hint">Tap a gray dot to record; tap a blue dot to view/override.</p>
+<p class="hint">Tap a gray dot to record. Tap the value (or tiny dot) to view/override.</p>
 
 <script>
-/* ---------------- DOM refs ---------------- */
+/* ---------- DOM ---------- */
 const view   = document.getElementById('view');
 const canvas = document.getElementById('rink');
 const ctx    = canvas.getContext('2d', { willReadFrequently:true });
@@ -177,27 +204,28 @@ const connectBtn = document.getElementById('connectBtn');
 const saveBtn = document.getElementById('saveBtn');
 const bleStatus = document.getElementById('bleStatus');
 
-/* Overlay refs */
+/* Overlay */
 const overlay = document.getElementById('overlay');
 const bigValue = document.getElementById('bigValue');
 const overrideBtn = document.getElementById('overrideBtn');
 const closeBtn = document.getElementById('closeBtn');
 
-/* ---------------- Immediate button wiring ---------------- */
+/* ---------- Immediate wiring ---------- */
 homeBtn.addEventListener('click', ()=>{ location.href='index.html'; });
 
-/* ---------------- Canvas + layout (mirrors Templates) ---------------- */
+/* ---------- Layout & drawing ---------- */
 const img = new Image(); img.src='rink1.png';
 const state={
   naturalW:600, naturalH:1200, mobile:false, rotated:false, centerY:0.5,
   points:[], uid:null, allNames:[], currentName:null,
   readings:[],                      // [{key, value, u, v}]
-  doorCanon:{ edge:0, t:0.5 },      // saved in template (portrait canonical)
-  doorDisp: { edge:0, t:0.5 },      // computed for current display orientation
+  doorCanon:{ edge:0, t:0.5 },      // portrait canonical
+  doorDisp: { edge:0, t:0.5 },
   doorLen:100, doorThick:20
 };
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function setCSS(varName, px){ document.documentElement.style.setProperty(varName, Math.round(px)+'px'); }
 function setCanvasSize(w,h){
   canvas.width=Math.max(1,Math.round(w));
   canvas.height=Math.max(1,Math.round(h));
@@ -211,7 +239,7 @@ function applyLayout(){
   state.mobile=window.matchMedia('(max-width: 900px)').matches;
   const imageIsVertical=state.naturalH>state.naturalW;
   const wantVertical=state.mobile;
-  state.rotated=(wantVertical!==imageIsVertical); // desktop rotates
+  state.rotated=(wantVertical!==imageIsVertical);
 
   let availW, availH;
   if(state.mobile){
@@ -227,11 +255,23 @@ function applyLayout(){
   let w=availW, h=w/aspect; if(h>availH){ h=availH; w=h*aspect; }
   setCanvasSize(w,h);
 
-  const d=Math.max(2, Math.round(Math.min(canvas.width, canvas.height)*0.10));
-  document.documentElement.style.setProperty('--dot-size', d+'px');
-
-  // Door size (same scale as templates: 20% long side * 0.6)
+  /* Sizes:
+     - Big tappable (gray) ~ 8–10% of min side
+     - Tiny blue dot like View Variance ~ 1.5% of min side
+     - Label font based on long side (slightly larger on desktop)
+  */
+  const minSide = Math.min(canvas.width, canvas.height);
   const longSide = Math.max(canvas.width, canvas.height);
+  const touchDot = Math.max(24, Math.round(minSide * 0.10));
+  const tinyDot  = Math.max(6,  Math.round(minSide * 0.015));
+  const labelPx  = state.mobile
+    ? Math.max(12, Math.round(longSide * 0.018))
+    : Math.max(14, Math.round(longSide * 0.024));
+  setCSS('--touch-dot', touchDot);
+  setCSS('--tiny-dot', tinyDot);
+  setCSS('--label-fontpx', labelPx);
+
+  // Door size (same math as templates)
   state.doorLen   = Math.round(longSide * 0.20 * 0.6);
   state.doorThick = Math.max(8, Math.round(state.doorLen * 0.16));
   doorEl.style.width = state.doorLen + 'px';
@@ -239,9 +279,8 @@ function applyLayout(){
   doorEl.style.fontSize = Math.round(state.doorThick*0.55) + 'px';
   doorEl.style.lineHeight = state.doorThick + 'px';
 
-  // Recompute display door from canonical for current rotation
   state.doorDisp = doorCanonicalToDisplay(state.doorCanon);
-  drawRink(); renderDots(); positionDoor();
+  drawRink(); renderPoints(); positionDoor();
 }
 function drawRink(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -256,33 +295,78 @@ function uvToCanvas(u,v){
   const W=canvas.width, H=canvas.height;
   return state.mobile ? {x:u*W, y:v*H} : {x:v*W, y:(1-u)*H};
 }
-function clearDots(){ view.querySelectorAll('.dot').forEach(n=>n.remove()); }
-function renderDots(){
-  clearDots();
+
+/* Render all points:
+   - If we already have a reading for key -> tiny blue dot + label
+   - Else -> big gray tappable dot
+*/
+function clearRendered(){
+  view.querySelectorAll('.dot').forEach(n=>n.remove());
+  view.querySelectorAll('.vlabel').forEach(n=>n.remove());
+}
+function renderPoints(){
+  clearRendered();
+  const styles = getComputedStyle(document.documentElement);
+  const tinyDotPx = parseFloat(styles.getPropertyValue('--tiny-dot')) || 10;
+  const labelPx = parseFloat(styles.getPropertyValue('--label-fontpx')) || 12;
+  const labelOffsetPx = Math.max(10, Math.round(Math.max(labelPx * 0.9, tinyDotPx * 1.2)));
+
+  // Build a quick map for readings
+  const rMap = new Map(state.readings.map(r=>[r.key, r]));
+
   state.points.forEach(pt=>{
-    if(pt.mode==='single'){ addDot({u:pt.u,v:pt.v,id:pt.id}, 'single'); }
+    const emit = (u,v,side)=>{
+      const key = `${pt.id}:${side}`;
+      const pos = uvToCanvas(u,v);
+      const left = (pos.x/canvas.width*100)+'%';
+      const top  = (pos.y/canvas.height*100)+'%';
+
+      const existing = rMap.get(key);
+      if (existing){
+        // Tiny blue + label
+        const dot = document.createElement('div');
+        dot.className = 'dot tiny';
+        dot.style.left = left; dot.style.top = top;
+        dot.dataset.key = key;
+        dot.addEventListener('click', ()=>openOverlayForKey(key)); // tiny dot also opens
+        view.appendChild(dot);
+
+        const lab = document.createElement('div');
+        lab.className = 'vlabel';
+        lab.textContent = String(existing.value);
+        lab.style.left = left; lab.style.top = top;
+
+        // place below if would clip at top
+        const pxY = pos.y;
+        if ((pxY - labelOffsetPx) < 0) lab.classList.add('below');
+
+        lab.dataset.key = key;
+        lab.addEventListener('click', ()=>openOverlayForKey(key));
+        view.appendChild(lab);
+      } else {
+        // Big gray tappable
+        const btn = document.createElement('button');
+        btn.type='button';
+        btn.className='dot';
+        btn.style.left = left; btn.style.top = top;
+        btn.dataset.key=key; btn.dataset.u=String(u); btn.dataset.v=String(v);
+        btn.addEventListener('click', ()=>handleGrayPress(btn));
+        view.appendChild(btn);
+      }
+    };
+
+    if (pt.mode==='single'){ emit(pt.u, pt.v, 'single'); }
     else{
       const vTop=Math.min(pt.v, 2*state.centerY-pt.v);
       const vBot=Math.max(pt.v, 2*state.centerY-pt.v);
-      addDot({u:pt.u,v:vTop,id:pt.id}, 'top');
-      addDot({u:pt.u,v:vBot,id:pt.id}, 'bottom');
+      emit(pt.u, vTop, 'top');
+      emit(pt.u, vBot, 'bottom');
     }
   });
 }
-function addDot(p,side){
-  const pos=uvToCanvas(p.u,p.v);
-  const d=document.createElement('button');
-  d.type='button'; d.className='dot gray';
-  d.style.left=(pos.x/canvas.width*100)+'%';
-  d.style.top =(pos.y/canvas.height*100)+'%';
-  const key=`${p.id}:${side}`;
-  Object.assign(d.dataset, { key, id:p.id, side, u:String(p.u), v:String(p.v) });
-  d.addEventListener('click', ()=>handleDotPress(d));
-  view.appendChild(d);
-}
 
-/* ---- DOOR mapping (portrait canonical -> current display) ---- */
-const CANON_TO_DISPLAY = [3,0,1,2]; // when rotated CW visually
+/* ---------- Door mapping ---------- */
+const CANON_TO_DISPLAY = [3,0,1,2];
 function doorCanonicalToDisplay(doorCanon){
   if (!doorCanon) return { edge:0, t:0.5 };
   let { edge:e, t } = doorCanon;
@@ -331,7 +415,7 @@ function positionDoor(){
   doorEl.style.transform = `translate(-50%,-50%) rotate(${angle}deg)`;
 }
 
-/* draw ASAP (even before image/auth) */
+/* ---------- Boot layout ---------- */
 applyLayout();
 if (img.complete && img.naturalWidth>0){
   state.naturalW=img.naturalWidth; state.naturalH=img.naturalHeight; applyLayout();
@@ -343,12 +427,12 @@ window.addEventListener('resize', applyLayout);
 window.addEventListener('orientationchange', applyLayout);
 new ResizeObserver(()=>applyLayout()).observe(document.querySelector('header'));
 
-/* ---------------- BLE (Nordic UART “?” flow) ---------------- */
+/* ---------- BLE (Nordic UART “?” flow) ---------- */
 const enc=new TextEncoder(), dec=new TextDecoder();
 const NUS_SERVICE_UUID='6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_RX_CHAR_UUID='6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_TX_CHAR_UUID='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
-let ble={device:null,server:null,service:null,rx:null,tx:null,connected:false}, inFlight=false, pendingDot=null, askTimer=null;
+let ble={device:null,server:null,service:null,rx:null,tx:null,connected:false}, inFlight=false, pendingKey=null, askTimer=null;
 
 function setBleUI(connected){
   ble.connected = !!connected;
@@ -359,9 +443,7 @@ function setBleUI(connected){
 connectBtn.addEventListener('click', async ()=>{
   try{
     const device = await navigator.bluetooth.requestDevice({filters:[{name:'BUDDY'}],optionalServices:[NUS_SERVICE_UUID]});
-    device.addEventListener('gattserverdisconnected', ()=>{
-      setBleUI(false); // drop-off -> red “Disconnected”
-    });
+    device.addEventListener('gattserverdisconnected', ()=>{ setBleUI(false); });
     const server = await device.gatt.connect();
     const service= await server.getPrimaryService(NUS_SERVICE_UUID);
     const tx=await service.getCharacteristic(NUS_TX_CHAR_UUID);
@@ -375,52 +457,63 @@ connectBtn.addEventListener('click', async ()=>{
 function handleNotify(e){
   const text=dec.decode(e.target.value).trim();
   const value=(text.match(/-?\d+(\.\d+)?/)||[])[0]||text; // tolerant parse
+
   inFlight=false; clearTimeout(askTimer);
-  if (pendingDot){
-    // record/update reading for that dot
-    const key=pendingDot.dataset.key, u=+pendingDot.dataset.u, v=+pendingDot.dataset.v;
-    const i=state.readings.findIndex(r=>r.key===key); const rec={key,value,u,v};
-    if(i>=0) state.readings[i]=rec; else state.readings.push(rec);
-    saveBtn.disabled = state.readings.length===0;
-    // if popup is open for this dot, update the big readout
-    if (overlay.dataset.key === key) {
-      bigValue.textContent = value;
+
+  if (pendingKey){
+    // Find dot metadata for this key
+    // We stored u/v when we sent the request
+    const meta = pendingKeyMeta.get(pendingKey);
+    if (meta){
+      const {u,v} = meta;
+      // upsert
+      const i = state.readings.findIndex(r=>r.key===pendingKey);
+      const rec = { key: pendingKey, value, u, v };
+      if (i>=0) state.readings[i]=rec; else state.readings.push(rec);
+
+      // Refresh UI: convert big gray -> tiny + label
+      renderPoints();
+
+      // If overlay is open for this key, update big readout
+      if (overlay.dataset.key === pendingKey){
+        bigValue.textContent = String(value);
+      }
     }
-    pendingDot=null;
+    pendingKey = null;
+    pendingKeyMeta.delete(pendingKey);
+    saveBtn.disabled = state.readings.length===0;
   }
 }
 async function sendRaw(s){ if(ble.connected&&ble.rx){ try{ await ble.rx.writeValueWithoutResponse(enc.encode(s)); }catch(e){ console.error(e); } } }
 
-/* Dot interactions */
-function handleDotPress(dot){
-  if (dot.classList.contains('blue')){
-    // Already has a reading – show popup with current stored value
-    const key = dot.dataset.key;
-    const found = state.readings.find(r=>r.key===key);
-    bigValue.textContent = found ? String(found.value) : '—';
-    overlay.dataset.key = key;
-    overlay.dataset.dotId = dot.dataset.id;
-    overlay.classList.add('show');
-    overlay.setAttribute('aria-hidden','false');
-  } else {
-    if (!ble.connected){ alert('Connect to the BLE device first.'); return; }
-    // Turn blue immediately for UX, then send “?”
-    dot.classList.remove('gray'); dot.classList.add('blue');
-    // request value; will be saved on notify
-    requestReadingForDot(dot);
-  }
-}
-async function requestReadingForDot(dot){
-  if (inFlight) return; // keep single inflight to match device behavior
-  pendingDot=dot; inFlight=true;
-  await sendRaw('?');
+/* keep small metadata for pending key -> u,v */
+const pendingKeyMeta = new Map();
+
+/* Gray press: send '?' and remember key/u/v; (dot converts after notify) */
+function handleGrayPress(btn){
+  if (!ble.connected){ alert('Connect to the BLE device first.'); return; }
+  if (inFlight) return;
+  const key = btn.dataset.key;
+  const u = +btn.dataset.u, v = +btn.dataset.v;
+
+  pendingKey = key;
+  pendingKeyMeta.set(key, {u, v});
+  inFlight=true;
+  sendRaw('?');
   clearTimeout(askTimer);
-  askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingDot=null; alert('No response within 2s.'); } },2000);
+  askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingKey=null; pendingKeyMeta.delete(key); alert('No response within 2s.'); } },2000);
 }
 
-/* Popup actions */
+/* Overlay open/close + Override */
+function openOverlayForKey(key){
+  const found = state.readings.find(r=>r.key===key);
+  bigValue.textContent = found ? String(found.value) : '—';
+  overlay.dataset.key = key;
+  overlay.classList.add('show');
+  overlay.setAttribute('aria-hidden','false');
+}
 overlay.addEventListener('click', (e)=>{
-  if (e.target === overlay){ // click outside modal to close
+  if (e.target === overlay){
     overlay.classList.remove('show');
     overlay.setAttribute('aria-hidden','true');
   }
@@ -429,17 +522,22 @@ closeBtn.addEventListener('click', ()=>{
   overlay.classList.remove('show');
   overlay.setAttribute('aria-hidden','true');
 });
-overrideBtn.addEventListener('click', async ()=>{
+overrideBtn.addEventListener('click', ()=>{
   if (!ble.connected){ alert('Connect to the BLE device first.'); return; }
-  // find the dot element by key
   const key = overlay.dataset.key;
-  const dot = [...document.querySelectorAll('.dot')].find(d=>d.dataset.key===key);
-  if (!dot) return;
-  // keep it blue, send “?” and update when notify arrives
-  requestReadingForDot(dot);
+  if (!key) return;
+  // Need u/v for this key to upsert on notify; grab from current reading
+  const found = state.readings.find(r=>r.key===key);
+  if (!found) return;
+  pendingKey = key;
+  pendingKeyMeta.set(key, {u:found.u, v:found.v});
+  inFlight = true;
+  sendRaw('?');
+  clearTimeout(askTimer);
+  askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingKey=null; pendingKeyMeta.delete(key); alert('No response within 2s.'); } },2000);
 });
 
-/* ---------------- Firebase (dynamic import; uses persisted login) ---------------- */
+/* ---------- Firebase (persisted login) ---------- */
 let auth=null, db=null;
 (async ()=>{
   try{
@@ -462,37 +560,11 @@ let auth=null, db=null;
     db   = fsMod.getFirestore(app);
     try { await authMod.setPersistence(auth, authMod.browserLocalPersistence); } catch {}
 
-    /* ---------- Firestore path helpers for defaults ---------- */
-    const defaultsDoc = (uid)=> fsMod.doc(db, 'users', uid, 'defaults', 'root');
-    const arenasCol   = (uid)=> fsMod.collection(defaultsDoc(uid), 'arenas');
-    const arenaDoc    = (uid, arenaId)=> fsMod.doc(arenasCol(uid), arenaId);
-    const padsCol     = (uid, arenaId)=> fsMod.collection(arenaDoc(uid, arenaId), 'pads');
-    const employeesCol= (uid)=> fsMod.collection(defaultsDoc(uid), 'employees');
-
-    let arenaUnsub=null, padsUnsub=null, empUnsub=null;
-
-    function bindPads(arenaId){
-      if(padsUnsub) { padsUnsub(); padsUnsub=null; }
-      if(!arenaId){ selPad.innerHTML = `<option>—</option>`; return; }
-      padsUnsub = fsMod.onSnapshot(padsCol(state.uid, arenaId), (snap)=>{
-        const names = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
-        selPad.innerHTML = names.length
-          ? names.map(n=>`<option>${n}</option>`).join('')
-          : `<option>—</option>`;
-      }, (e)=>console.error('pads onSnapshot', e));
-    }
-
-    // When signed in: load templates + defaults
     authMod.onAuthStateChanged(auth, async (user)=>{
       if (!user) return;
       state.uid = user.uid;
 
-      // Ensure defaults/root exists (no-op if already there)
-      try{
-        await fsMod.setDoc(defaultsDoc(state.uid), { touchedAt: fsMod.serverTimestamp() }, { merge:true });
-      }catch(e){ console.warn('ensure defaults/root failed', e); }
-
-      // ---- Templates list ----
+      // Load template names
       try{
         const usersDoc = fsMod.doc(db, 'users', state.uid);
         const tplCol   = fsMod.collection(usersDoc, 'templates');
@@ -501,39 +573,14 @@ let auth=null, db=null;
         templateSelect.innerHTML = `<option value="">Select a template…</option>`;
         state.allNames.forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=n; templateSelect.appendChild(o); });
       }catch(e){ console.error('template list', e); }
-
-      // ---- Defaults: Arenas (live) ----
-      if (arenaUnsub) arenaUnsub();
-      arenaUnsub = fsMod.onSnapshot(arenasCol(state.uid), (snap)=>{
-        const prev = selRink.value;
-        const names = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
-        selRink.innerHTML = names.length
-          ? names.map(n=>`<option>${n}</option>`).join('')
-          : `<option>—</option>`;
-        // Keep previous selection if still present, else take first
-        if (names.includes(prev)) selRink.value = prev;
-        bindPads(selRink.value && selRink.value !== '—' ? selRink.value : null);
-      }, (e)=>console.error('arenas onSnapshot', e));
-
-      // Change handler to refetch pads for selected arena
-      selRink.addEventListener('change', (e)=> bindPads(e.target.value));
-
-      // ---- Defaults: Employees (live) ----
-      if (empUnsub) empUnsub();
-      empUnsub = fsMod.onSnapshot(employeesCol(state.uid), (snap)=>{
-        const names = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
-        selEmp.innerHTML = names.length
-          ? names.map(n=>`<option>${n}</option>`).join('')
-          : `<option>—</option>`;
-      }, (e)=>console.error('employees onSnapshot', e));
     });
 
-    // template picker
+    /* Load template */
     templateSelect.addEventListener('change', async e=>{
       if (!db || !state.uid) { alert('Not signed in.'); e.target.value=''; return; }
       const name=e.target.value;
       state.readings=[]; saveBtn.disabled=true;
-      if (!name){ clearDots(); doorEl.style.display='none'; drawRink(); return; }
+      if (!name){ clearRendered(); doorEl.style.display='none'; drawRink(); return; }
       try{
         const docRef = fsMod.doc(fsMod.collection(fsMod.doc(db,'users',state.uid),'templates'), name);
         const docSnap= await fsMod.getDoc(docRef);
@@ -551,7 +598,7 @@ let auth=null, db=null;
           u:+p.u, v:+p.v, mode:p.mode==='single'?'single':'mirrored'
         }));
 
-        // door (portrait canonical in Firestore) -> current display
+        // door
         if (data.door && Number.isFinite(data.door.edge) && Number.isFinite(data.door.t)){
           state.doorCanon = { edge: data.door.edge|0, t: +data.door.t };
           doorEl.style.display = 'flex';
@@ -561,11 +608,11 @@ let auth=null, db=null;
         }
 
         state.currentName=name;
-        applyLayout();    // redraw + reposition door for current orientation
+        applyLayout();    // redraw everything with correct sizing/orientation
       }catch(err){ console.error('load template', err); }
     });
 
-    // save variance
+    /* Save variance */
     saveBtn.addEventListener('click', async ()=>{
       if (!db || !state.uid){ alert('Sign in required.'); return; }
       if (!state.currentName){ alert('Pick a template first.'); return; }
@@ -575,7 +622,8 @@ let auth=null, db=null;
           templateName: state.currentName,
           rinkName: selRink.value, padName: selPad.value, employeeName: selEmp.value,
           readings: state.readings, centerY: state.centerY,
-          imgW: state.naturalW, imgH: state.naturalH, createdAt: fsMod.serverTimestamp()
+          imgW: state.naturalW, imgH: state.naturalH, createdAt: fsMod.serverTimestamp(),
+          door: state.doorCanon
         });
         alert('Variance saved.');
       }catch(e){ console.error('save variance', e); alert('Save failed.'); }
@@ -583,7 +631,6 @@ let auth=null, db=null;
 
   } catch (err){
     console.error('firebase import', err);
-    // Page still usable for rink + BLE + Home.
   }
 })();
 </script>
