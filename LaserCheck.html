@@ -1,203 +1,683 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>BUDDY — Web Bluetooth UART</title>
-  <style>
-    :root{--bg:#0f1115;--fg:#e6e6e6;--muted:#9aa4b2;--accent:#4da3ff;}
-    body{margin:0;background:var(--bg);color:var(--fg);
-         font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-    header{padding:16px 20px;border-bottom:1px solid #1c2030;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-    h1{font-size:16px;margin:0}
-    button{background:var(--accent);color:#000;border:0;border-radius:10px;padding:10px 14px;
-           font-weight:600;cursor:pointer}
-    button.secondary{background:#2a2f42;color:var(--fg)}
-    button:disabled{opacity:.6;cursor:not-allowed}
-    label{display:flex;align-items:center;gap:8px}
-    main{max-width:900px;margin:18px auto;padding:0 16px;display:grid;gap:12px}
-    .row{display:flex;gap:8px;flex-wrap:wrap}
-    #log{background:#0b0d12;border:1px solid #22283b;border-radius:12px;padding:12px;height:360px;overflow:auto;font-family:ui-monospace,Consolas,monospace}
-    .muted{color:var(--muted)}
-    input[type="text"]{flex:1;min-width:240px;background:#0b0d12;border:1px solid #22283b;color:var(--fg);
-                       padding:10px;border-radius:10px;outline:none}
-    .pill{display:inline-block;background:#1a2033;color:#9ec5ff;border:1px solid #233154;border-radius:999px;padding:2px 10px;margin-left:8px;font-size:12px}
-    .spacer{flex:1}
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rinkbuddy — Check Variance</title>
+<style>
+  :root {
+    --btn:#1f7aff; --muted:#9fb0d0; --hdrH:64px;
+    --blue:#4da3ff; --gray:#141824;
+    --touch-dot:40px;    /* big tappable */
+    --tiny-dot:10px;     /* tiny post-reading */
+    --label-fontpx:12px; /* value label */
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{ margin:0; background:#000; color:#e9eef9; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+
+  header{
+    position:sticky; top:0; z-index:30;
+    display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center;
+    padding:10px 12px; background:#0b0d13; border-bottom:1px solid #1b1e27;
+  }
+  .left,.center,.right{display:flex; gap:10px; align-items:center}
+  .center{justify-content:center}
+  .right{justify-content:flex-end}
+
+  .btn{
+    appearance:none; border:0; border-radius:999px; padding:10px 14px;
+    font-weight:700; color:#fff; cursor:pointer; background:var(--btn);
+    box-shadow:0 6px 14px rgba(31,122,255,.18);
+  }
+  .btn.secondary{ background:#22304b; border:1px solid #2b3a59; }
+  .btn:disabled{opacity:.6; cursor:not-allowed}
+
+  select{
+    background:#121623; color:#fff; border:1px solid #1f2637; border-radius:10px;
+    padding:10px 12px; min-width:180px; font-weight:600;
+  }
+  label{ color:var(--muted); font-weight:700; display:flex; gap:8px; align-items:center }
+
+  .pill{
+    display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; border:1px solid #233154;
+  }
+  .pill.connected{ background:#13301f; color:#95ffb5; border-color:#1d4d31; }
+  .pill.disconnected{ background:#2a0e12; color:#ff9aa6; border-color:#5a1d28; }
+
+  .stage{ display:flex; justify-content:center; align-items:center; width:100%; }
+  .viewport{
+    position:relative; margin:10px auto 0; border:1px solid #191c26; border-radius:14px;
+    overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.35); background:#000;
+  }
+  canvas#rink { display:block; width:100%; height:100%; }
+
+  /* Big gray tappable (pre-reading) */
+  .dot{
+    position:absolute; transform:translate(-50%,-50%);
+    width:var(--touch-dot); height:var(--touch-dot);
+    border-radius:999px; border:2px solid #fff;
+    background:var(--gray);
+    box-shadow:0 4px 12px rgba(0,0,0,.4);
+    display:block; user-select:none; cursor:pointer;
+  }
+  /* Tiny blue + label (post-reading) */
+  .dot.tiny{
+    width:var(--tiny-dot); height:var(--tiny-dot);
+    border:0; background:var(--blue);
+    box-shadow:0 2px 6px rgba(0,0,0,.25);
+  }
+  .vlabel{
+    position:absolute; transform:translate(-50%,-100%);
+    color:#000; font-weight:900; font-size:var(--label-fontpx); line-height:1; white-space:nowrap;
+    cursor:pointer; user-select:none;
+    background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:6px;
+    border:1px solid rgba(255,255,255,0.12);
+  }
+  .vlabel.below{ transform:translate(-50%, 0%); }
+
+  /* Door (read-only) */
+  .door{
+    position:absolute; transform-origin:50% 50%;
+    background:#ffd600; color:#000; border:2px solid #000;
+    border-radius:6px; font-weight:900; letter-spacing:1px;
+    display:flex; align-items:center; justify-content:center;
+    user-select:none; pointer-events:none;
+    box-shadow:0 6px 18px rgba(0,0,0,.35);
+  }
+
+  /* Overlay */
+  .overlay{ position:fixed; inset:0; display:none; place-items:center; z-index:60; }
+  .overlay.show{ display:grid; }
+  .overlay::before{ content:""; position:absolute; inset:0; background:rgba(0,0,0,.55); }
+  .modal{
+    position:relative; z-index:1;
+    background:rgba(77,163,255,.16);
+    border:1px solid rgba(77,163,255,.45);
+    border-radius:16px; padding:20px; min-width:280px; max-width:92vw;
+    box-shadow:0 20px 70px rgba(0,0,0,.5); backdrop-filter: blur(6px);
+  }
+  .modal h2{ margin:0 0 12px; font-size:14px; color:#bcd4ff; font-weight:700; letter-spacing:.4px; }
+  .big-value{ font-size:56px; line-height:1; font-weight:900; text-align:center; color:#e9f1ff; margin:8px 6px 16px; }
+  .actions{ display:flex; gap:10px; justify-content:flex-end }
+  .actions .btn.secondary{ background:#2a354f; border-color:#3a4a6e }
+
+  /* Manual entry field */
+  .entry{
+    display:flex; gap:8px; align-items:center; justify-content:center; margin:8px 0 16px;
+  }
+  .entry input{
+    width:220px; background:#0b1324; color:#e9f1ff; border:1px solid #29406f; border-radius:10px;
+    padding:10px 12px; font-weight:800; font-size:20px; text-align:center; outline:none;
+  }
+
+  .hint{ color:#9fb0d0; margin:10px 12px 18px }
+
+  @media (min-width: 901px){
+    .stage{ min-height: calc(100vh - var(--hdrH)); }
+  }
+  @media (max-width: 900px){
+    html, body { height: 100svh; overflow: hidden; }
+    header{
+      position:fixed; top:0; left:0; right:0; z-index:40;
+      display:flex; gap:10px; align-items:center;
+      overflow-x:auto; overflow-y:hidden; white-space:nowrap;
+      -webkit-overflow-scrolling:touch; scrollbar-width:none;
+    }
+    header::-webkit-scrollbar{display:none}
+    .left,.center,.right{display:inline-flex; gap:10px; align-items:center}
+    .app{ padding-top: var(--hdrH); height: 100svh; overflow:hidden; }
+    .stage{ height: calc(100svh - var(--hdrH)); align-items:center; justify-content:center; }
+    .viewport{ margin:6px auto 0; }
+  }
+</style>
 </head>
 <body>
-  <header>
-    <h1>BUDDY — Web Bluetooth UART <span id="status" class="pill">disconnected</span></h1>
-    <button id="btnConnect">Connect</button>
-    <button id="btnDisconnect" class="secondary" disabled>Disconnect</button>
-    <span class="spacer"></span>
-    <label title="If your device name isn't visible in advertisements, enable this and pick it from the chooser.">
-      <input type="checkbox" id="chkAll" />
-      Show all devices
+<header>
+  <div class="left">
+    <button id="homeBtn" class="btn secondary">Home</button>
+    <label>Rink Name:
+      <select id="selRink"><option>Scotiabank Arena</option></select>
     </label>
-  </header>
+    <label>Pad Name:
+      <select id="selPad"><option>North</option></select>
+    </label>
+    <label>Employee Name:
+      <select id="selEmp"><option>Bob</option></select>
+    </label>
+  </div>
 
-  <main>
-    <div class="row">
-      <input id="txInput" type="text" placeholder="Type text to send to BUDDY (BLE RX)..." disabled />
-      <button id="btnSend" disabled>Send</button>
-      <button id="btnAsk" class="secondary" disabled>Ask “?”</button>
+  <div class="center">
+    <label style="color:#e9eef9">
+      <span style="color:#9fb0d0">Select a template…</span>
+      <select id="templateSelect" style="min-width:260px">
+        <option value="">Select a template…</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="right">
+    <span id="bleStatus" class="pill disconnected">Disconnected</span>
+    <button id="connectBtn" class="btn">Connect</button>
+    <button id="saveBtn" class="btn secondary" disabled>Save</button>
+  </div>
+</header>
+
+<div class="app">
+  <div class="stage">
+    <div id="view" class="viewport">
+      <canvas id="rink"></canvas>
+      <div id="door" class="door" style="display:none">DOOR</div>
+    </div>
+  </div>
+</div>
+
+<!-- Popup overlay -->
+<div id="overlay" class="overlay" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ovTitle">
+    <h2 id="ovTitle">Current value</h2>
+
+    <!-- View/Override mode -->
+    <div id="viewMode" style="display:none">
+      <div id="bigValue" class="big-value">—</div>
+      <div class="actions">
+        <button id="overrideBtn" class="btn">Override</button>
+        <button id="closeBtn1" class="btn secondary">Close</button>
+      </div>
     </div>
 
-    <div id="log" aria-live="polite"></div>
-
-    <div class="muted">
-      Tip: Use Chrome on desktop. Serve this file from <b>http://localhost</b> (e.g., <code>python -m http.server 8000</code>) or HTTPS.
-      Web Bluetooth won’t work from <code>file://</code>.
+    <!-- Manual entry mode -->
+    <div id="entryMode" style="display:none">
+      <div class="entry">
+        <input id="entryInput" type="text" inputmode="decimal" autocomplete="off" />
+      </div>
+      <div class="actions">
+        <button id="saveEntryBtn" class="btn">Save</button>
+        <button id="closeBtn2" class="btn secondary">Close</button>
+      </div>
     </div>
-  </main>
+  </div>
+</div>
 
-  <script>
-    // Nordic UART Service UUIDs
-    const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-    const NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // Write / WriteNR
-    const NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // Notify-only on your ESP32
+<p class="hint">Tap a gray dot to record. Tap the value (or tiny dot) to view/override.</p>
 
-    const deviceNameFilter = 'BUDDY';
-    const enc = new TextEncoder();
-    const dec = new TextDecoder();
+<script>
+/* ---------- DOM ---------- */
+const view   = document.getElementById('view');
+const canvas = document.getElementById('rink');
+const ctx    = canvas.getContext('2d', { willReadFrequently:true });
+const doorEl = document.getElementById('door');
 
-    let device = null, server = null, service = null, rxChar = null, txChar = null;
-    let inFlight = false;        // prevent double-requests
-    let askTimer = null;         // client-side timeout
+const homeBtn = document.getElementById('homeBtn');
+const templateSelect = document.getElementById('templateSelect');
 
-    const el = s => document.querySelector(s);
-    const logBox = el('#log');
-    const statusPill = el('#status');
-    const btnConnect = el('#btnConnect');
-    const btnDisconnect = el('#btnDisconnect');
-    const btnSend = el('#btnSend');
-    const btnAsk  = el('#btnAsk');
-    const txInput = el('#txInput');
-    const chkAll  = el('#chkAll');
+const selRink = document.getElementById('selRink');
+const selPad  = document.getElementById('selPad');
+const selEmp  = document.getElementById('selEmp');
 
-    function log(msg, cls='') {
-      const time = new Date().toLocaleTimeString();
-      const line = document.createElement('div');
-      line.innerHTML = `<span class="muted">[${time}]</span> ${msg}`;
-      if (cls) line.className = cls;
-      logBox.appendChild(line);
-      logBox.scrollTop = logBox.scrollHeight;
+const connectBtn = document.getElementById('connectBtn');
+const saveBtn = document.getElementById('saveBtn');
+const bleStatus = document.getElementById('bleStatus');
+
+/* Overlay refs */
+const overlay = document.getElementById('overlay');
+const viewMode = document.getElementById('viewMode');
+const entryMode = document.getElementById('entryMode');
+const bigValue = document.getElementById('bigValue');
+const overrideBtn = document.getElementById('overrideBtn');
+const closeBtn1 = document.getElementById('closeBtn1');
+const closeBtn2 = document.getElementById('closeBtn2');
+const entryInput = document.getElementById('entryInput');
+const saveEntryBtn = document.getElementById('saveEntryBtn');
+
+/* ---------- Immediate wiring ---------- */
+homeBtn.addEventListener('click', ()=>{ location.href='index.html'; });
+
+/* ---------- Layout & drawing ---------- */
+const img = new Image(); img.src='rink1.png';
+const state={
+  naturalW:600, naturalH:1200, mobile:false, rotated:false, centerY:0.5,
+  points:[], uid:null, allNames:[], currentName:null,
+  readings:[],                      // [{key, value, u, v}]
+  doorCanon:{ edge:0, t:0.5 },      // portrait canonical
+  doorDisp: { edge:0, t:0.5 },
+  doorLen:100, doorThick:20
+};
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function setCSS(varName, px){ document.documentElement.style.setProperty(varName, Math.round(px)+'px'); }
+function setCanvasSize(w,h){
+  canvas.width=Math.max(1,Math.round(w));
+  canvas.height=Math.max(1,Math.round(h));
+  view.style.width=canvas.width+'px';
+  view.style.height=canvas.height+'px';
+}
+function applyLayout(){
+  const headerH=document.querySelector('header').offsetHeight||64;
+  document.documentElement.style.setProperty('--hdrH', headerH+'px');
+
+  state.mobile=window.matchMedia('(max-width: 900px)').matches;
+  const imageIsVertical=state.naturalH>state.naturalW;
+  const wantVertical=state.mobile;
+  state.rotated=(wantVertical!==imageIsVertical);
+
+  let availW, availH;
+  if(state.mobile){
+    const stage=document.querySelector('.stage');
+    availW=Math.max(1,stage.clientWidth-12);
+    availH=Math.max(1,stage.clientHeight-12);
+    if(availW<=1||availH<=1){ requestAnimationFrame(applyLayout); return; }
+  }else{
+    availW=Math.max(1,window.innerWidth-24);
+    availH=Math.max(1,window.innerHeight-headerH-24);
+  }
+  const aspect = state.rotated ? (state.naturalH/state.naturalW) : (state.naturalW/state.naturalH);
+  let w=availW, h=w/aspect; if(h>availH){ h=availH; w=h*aspect; }
+  setCanvasSize(w,h);
+
+  const minSide = Math.min(canvas.width, canvas.height);
+  const longSide = Math.max(canvas.width, canvas.height);
+  const touchDot = Math.max(24, Math.round(minSide * 0.10));
+  const tinyDot  = Math.max(6,  Math.round(minSide * 0.015));
+  const labelPx  = state.mobile
+    ? Math.max(12, Math.round(longSide * 0.018))
+    : Math.max(14, Math.round(longSide * 0.024));
+  setCSS('--touch-dot', touchDot);
+  setCSS('--tiny-dot', tinyDot);
+  setCSS('--label-fontpx', labelPx);
+
+  // Door size
+  state.doorLen   = Math.round(longSide * 0.20 * 0.6);
+  state.doorThick = Math.max(8, Math.round(state.doorLen * 0.16));
+  doorEl.style.width = state.doorLen + 'px';
+  doorEl.style.height = state.doorThick + 'px';
+  doorEl.style.fontSize = Math.round(state.doorThick*0.55) + 'px';
+  doorEl.style.lineHeight = state.doorThick + 'px';
+
+  state.doorDisp = doorCanonicalToDisplay(state.doorCanon);
+  drawRink(); renderPoints(); positionDoor();
+}
+function drawRink(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(state.rotated){
+    ctx.save(); ctx.translate(0, canvas.height); ctx.rotate(-Math.PI/2);
+    ctx.drawImage(img, 0, 0, canvas.height, canvas.width); ctx.restore();
+  } else {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  }
+}
+function uvToCanvas(u,v){
+  const W=canvas.width, H=canvas.height;
+  return state.mobile ? {x:u*W, y:v*H} : {x:v*W, y:(1-u)*H};
+}
+function clearRendered(){
+  view.querySelectorAll('.dot').forEach(n=>n.remove());
+  view.querySelectorAll('.vlabel').forEach(n=>n.remove());
+}
+function renderPoints(){
+  clearRendered();
+  const styles = getComputedStyle(document.documentElement);
+  const tinyDotPx = parseFloat(styles.getPropertyValue('--tiny-dot')) || 10;
+  const labelPx = parseFloat(styles.getPropertyValue('--label-fontpx')) || 12;
+  const labelOffsetPx = Math.max(10, Math.round(Math.max(labelPx * 0.9, tinyDotPx * 1.2)));
+
+  const rMap = new Map(state.readings.map(r=>[r.key, r]));
+
+  state.points.forEach(pt=>{
+    const emit = (u,v,side)=>{
+      const key = `${pt.id}:${side}`;
+      const pos = uvToCanvas(u,v);
+      const left = (pos.x/canvas.width*100)+'%';
+      const top  = (pos.y/canvas.height*100)+'%';
+
+      const existing = rMap.get(key);
+      if (existing){
+        const dot = document.createElement('div');
+        dot.className = 'dot tiny';
+        dot.style.left = left; dot.style.top = top;
+        dot.dataset.key = key;
+        dot.addEventListener('click', ()=>openViewOverlay(key));
+        view.appendChild(dot);
+
+        const lab = document.createElement('div');
+        lab.className = 'vlabel';
+        lab.textContent = String(existing.value);
+        lab.style.left = left; lab.style.top = top;
+        if ((pos.y - labelOffsetPx) < 0) lab.classList.add('below');
+        lab.dataset.key = key;
+        lab.addEventListener('click', ()=>openViewOverlay(key));
+        view.appendChild(lab);
+      } else {
+        const btn = document.createElement('button');
+        btn.type='button';
+        btn.className='dot';
+        btn.style.left = left; btn.style.top = top;
+        btn.dataset.key=key; btn.dataset.u=String(u); btn.dataset.v=String(v);
+        btn.addEventListener('click', ()=>handleDotPress(btn));
+        view.appendChild(btn);
+      }
+    };
+
+    if (pt.mode==='single'){ emit(pt.u, pt.v, 'single'); }
+    else{
+      const vTop=Math.min(pt.v, 2*state.centerY-pt.v);
+      const vBot=Math.max(pt.v, 2*state.centerY-pt.v);
+      emit(pt.u, vTop, 'top');
+      emit(pt.u, vBot, 'bottom');
     }
+  });
+}
 
-    function setConnectedUI(connected) {
-      statusPill.textContent = connected ? 'connected' : 'disconnected';
-      btnConnect.disabled = connected;
-      btnDisconnect.disabled = !connected;
-      btnSend.disabled = !connected;
-      btnAsk.disabled  = !connected;
-      txInput.disabled = !connected;
-    }
+/* ---------- Door mapping ---------- */
+const CANON_TO_DISPLAY = [3,0,1,2];
+function doorCanonicalToDisplay(doorCanon){
+  if (!doorCanon) return { edge:0, t:0.5 };
+  let { edge:e, t } = doorCanon;
+  if (!state.rotated) return { edge:e|0, t:clamp(t,0,1) };
+  const dispEdge = CANON_TO_DISPLAY[e|0];
+  const dispT = (e===0 || e===2) ? (1 - t) : t;
+  return { edge: dispEdge, t: clamp(dispT, 0, 1) };
+}
+function positionDoor(){
+  if (doorEl.style.display === 'none') return;
+  const W=canvas.width, H=canvas.height;
+  const L=state.doorLen, T=state.doorThick, halfL=L/2, halfT=T/2;
 
-    function escapeHtml(s) {
-      return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    }
+  const edgeInset = Math.min(halfT * 0.6, 10);
+  const longSide = Math.max(W,H);
+  const CORNER_EXTRA_FRAC = 0.02;
+  const cornerInset = Math.min(halfL - halfT, edgeInset + longSide * CORNER_EXTRA_FRAC);
 
-    async function connect() {
-      try {
-        if (!('bluetooth' in navigator)) {
-          log('<b>Web Bluetooth not supported</b> in this browser. Use Chrome or Edge.');
-          return;
-        }
+  let {edge, t} = state.doorDisp;
+  edge = edge|0; t = clamp(t,0,1);
 
-        log('Requesting BLE device chooser…');
-        const options = chkAll.checked
-          ? { acceptAllDevices: true, optionalServices: [NUS_SERVICE_UUID] }
-          : { filters: [{ name: deviceNameFilter }], optionalServices: [NUS_SERVICE_UUID] };
+  let cx=0, cy=0, angle=0;
+  const cornerThresh = (edge===0 || edge===2) ? (halfL/W) : (halfL/H);
 
-        device = await navigator.bluetooth.requestDevice(options);
-        device.addEventListener('gattserverdisconnected', onDisconnected);
+  if (t <= cornerThresh){
+    if (edge===0 || edge===3){ const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=c; angle=-45; }
+    else if (edge===1){        const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=c; angle=45; }
+    else if (edge===2){        const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=H-c; angle=45; }
+  } else if (t >= 1 - cornerThresh){
+    if (edge===0){             const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=c; angle=45; }
+    else if (edge===1 || edge===2){ const c=Math.max(halfT, halfL - cornerInset); cx=W-c; cy=H-c; angle=-45; }
+    else if (edge===3){        const c=Math.max(halfT, halfL - cornerInset); cx=c; cy=H-c; angle=45; }
+  } else {
+    if (edge===0){ cx = t*W; cy = (halfT - edgeInset); angle = 0; }
+    else if (edge===2){ cx = t*W; cy = H - (halfT - edgeInset); angle = 0; }
+    else if (edge===1){ cx = W - (halfT - edgeInset); cy = t*H; angle = 90; }
+    else { cx = (halfT - edgeInset); cy = t*H; angle = 90; }
 
-        log(`Connecting to GATT server on <b>${device.name || 'Unknown'}</b>…`);
-        server = await device.gatt.connect();
+    const minC = Math.max(halfT, halfL - cornerInset);
+    if (edge===0 || edge===2) cx = clamp(cx, minC, W - minC);
+    else                      cy = clamp(cy, minC, H - minC);
+  }
 
-        log('Getting NUS service…');
-        service = await server.getPrimaryService(NUS_SERVICE_UUID);
+  doorEl.style.left = (cx / W * 100) + '%';
+  doorEl.style.top  = (cy / H * 100) + '%';
+  doorEl.style.transform = `translate(-50%,-50%) rotate(${angle}deg)`;
+}
 
-        log('Getting TX (notify) characteristic…');
-        txChar = await service.getCharacteristic(NUS_TX_CHAR_UUID);
-        await txChar.startNotifications();
-        txChar.addEventListener('characteristicvaluechanged', handleNotification);
-        log('Notifications enabled.');
+/* ---------- Boot layout ---------- */
+applyLayout();
+if (img.complete && img.naturalWidth>0){
+  state.naturalW=img.naturalWidth; state.naturalH=img.naturalHeight; applyLayout();
+}else{
+  img.onload = ()=>{ state.naturalW=img.naturalWidth||state.naturalW; state.naturalH=img.naturalHeight||state.naturalH; applyLayout(); };
+  img.onerror = ()=>{ applyLayout(); };
+}
+window.addEventListener('resize', applyLayout);
+window.addEventListener('orientationchange', applyLayout);
+new ResizeObserver(()=>applyLayout()).observe(document.querySelector('header'));
 
-        log('Getting RX (write) characteristic…');
-        rxChar = await service.getCharacteristic(NUS_RX_CHAR_UUID);
+/* ---------- BLE (must be device named "BUDDY") ---------- */
+const enc=new TextEncoder(), dec=new TextDecoder();
+const NUS_SERVICE_UUID='6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_RX_CHAR_UUID='6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_TX_CHAR_UUID='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+let ble={device:null,server:null,service:null,rx:null,tx:null,connected:false}, inFlight=false, pendingKey=null, askTimer=null;
 
-        setConnectedUI(true);
-        log('<b>Ready.</b> Click <b>Ask “?”</b> to request the latest frame, or send custom text.');
-      } catch (err) {
-        log(`<span style="color:#ff8a8a">Error: ${escapeHtml(err.message)}</span>`);
-        safeDisconnect();
-        setConnectedUI(false);
+function isBuddyConnected(){
+  return !!(ble.connected && ble.device && (ble.device.name||'').trim() === 'BUDDY');
+}
+function setBleUI(connected){
+  ble.connected = !!connected;
+  bleStatus.textContent = connected ? 'Connected' : 'Disconnected';
+  bleStatus.classList.toggle('connected', connected);
+  bleStatus.classList.toggle('disconnected', !connected);
+}
+connectBtn.addEventListener('click', async ()=>{
+  try{
+    const device = await navigator.bluetooth.requestDevice({
+      filters:[{ name:'BUDDY' }], optionalServices:[NUS_SERVICE_UUID]
+    });
+    device.addEventListener('gattserverdisconnected', ()=>{ setBleUI(false); });
+    const server = await device.gatt.connect();
+    const service= await server.getPrimaryService(NUS_SERVICE_UUID);
+    const tx=await service.getCharacteristic(NUS_TX_CHAR_UUID);
+    await tx.startNotifications();
+    tx.addEventListener('characteristicvaluechanged', handleNotify);
+    const rx=await service.getCharacteristic(NUS_RX_CHAR_UUID);
+    ble={device,server,service,rx,tx,connected:true};
+    setBleUI(true);
+  }catch(e){ console.error(e); alert('BLE connect failed (Chrome + HTTPS required).'); }
+});
+function handleNotify(e){
+  const text=dec.decode(e.target.value).trim();
+  const value=(text.match(/-?\d+(\.\d+)?/)||[])[0]||text;
+
+  inFlight=false; clearTimeout(askTimer);
+
+  if (pendingKey){
+    const meta = pendingKeyMeta.get(pendingKey);
+    if (meta){
+      const {u,v} = meta;
+      upsertReading(pendingKey, value, u, v);
+      renderPoints();
+      if (overlay.dataset.key === pendingKey){
+        bigValue.textContent = String(value);
       }
     }
+    pendingKeyMeta.delete(pendingKey);
+    pendingKey=null;
+    saveBtn.disabled = state.readings.length===0;
+  }
+}
+async function sendRaw(s){ if(ble.connected&&ble.rx){ try{ await ble.rx.writeValueWithoutResponse(enc.encode(s)); }catch(e){ console.error(e); } } }
 
-    function onDisconnected() {
-      log('<b>Disconnected.</b>');
-      setConnectedUI(false);
-      clearTimeout(askTimer);
-      inFlight = false;
-    }
+/* ---------- Dot behavior ---------- */
+const pendingKeyMeta = new Map();
 
-    function safeDisconnect() {
-      try { if (device && device.gatt && device.gatt.connected) device.gatt.disconnect(); } catch(e){}
-    }
+function handleDotPress(btn){
+  const key = btn.dataset.key;
+  const u = +btn.dataset.u, v = +btn.dataset.v;
 
-    function handleNotification(event) {
-      const text = dec.decode(event.target.value);
-      log(`<b>RX:</b> ${escapeHtml(text)}`);
-      // any incoming notification counts as a reply to the last request
-      inFlight = false;
-      clearTimeout(askTimer);
-    }
+  if (!isBuddyConnected()){
+    // Manual entry mode
+    openEntryOverlay(key, (existingFor(key)||{value:''}).value);
+    // store target u/v so Save knows where to write
+    overlay.dataset.u = String(u);
+    overlay.dataset.v = String(v);
+    return;
+  }
 
-    async function sendRaw(text) {
-      if (!rxChar) return log('Not connected.');
-      try {
-        // Use Write Without Response to avoid ATT response stalls
-        await rxChar.writeValueWithoutResponse(enc.encode(text));
-        log(`<span class="muted"><b>TX:</b> ${escapeHtml(text)}</span>`);
-      } catch (err) {
-        log(`<span style="color:#ff8a8a">Send error: ${escapeHtml(err.message)}</span>`);
-      }
-    }
+  // Connected to BUDDY: send '?'
+  if (inFlight) return;
+  pendingKey = key;
+  pendingKeyMeta.set(key, {u, v});
+  inFlight=true;
+  sendRaw('?');
+  clearTimeout(askTimer);
+  askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingKeyMeta.delete(key); pendingKey=null; alert('No response within 2s.'); } },2000);
+}
 
-    async function sendInput() {
-      const text = txInput.value;
-      if (!text) return;
-      await sendRaw(text);
-      txInput.value = '';
-      txInput.focus();
-    }
+function existingFor(key){ return state.readings.find(r=>r.key===key); }
+function upsertReading(key, value, u, v){
+  const i = state.readings.findIndex(r=>r.key===key);
+  const rec = { key, value, u, v };
+  if (i>=0) state.readings[i]=rec; else state.readings.push(rec);
+}
 
-    async function askOnce() {
-      if (inFlight) return; // ignore rapid repeats
-      inFlight = true;
-      await sendRaw('?');
-      // Client-side timeout: if no notify in 2s, let the log show it (helps diagnose)
-      clearTimeout(askTimer);
-      askTimer = setTimeout(() => {
-        if (inFlight) {
-          log('<span style="color:#ffcf66">No response within 2s (possible RF congestion or device busy)</span>');
-          inFlight = false;
+/* ---------- Overlay modes ---------- */
+function openViewOverlay(key){
+  const found = existingFor(key);
+  overlay.dataset.key = key;
+  viewMode.style.display = 'block';
+  entryMode.style.display = 'none';
+  bigValue.textContent = found ? String(found.value) : '—';
+  overlay.classList.add('show');
+  overlay.setAttribute('aria-hidden','false');
+}
+function openEntryOverlay(key, prefill=''){
+  overlay.dataset.key = key;
+  viewMode.style.display = 'none';
+  entryMode.style.display = 'block';
+  overlay.classList.add('show');
+  overlay.setAttribute('aria-hidden','false');
+
+  // Prepare the input: prefill, select, and focus so typing can start immediately
+  entryInput.value = String(prefill ?? '');
+  // defer selection to next frame to ensure it's rendered
+  requestAnimationFrame(()=>{
+    entryInput.focus();
+    entryInput.select();
+  });
+}
+function closeOverlay(){
+  overlay.classList.remove('show');
+  overlay.setAttribute('aria-hidden','true');
+  overlay.dataset.key = '';
+  delete overlay.dataset.u;
+  delete overlay.dataset.v;
+}
+overlay.addEventListener('click', (e)=>{ if (e.target === overlay) closeOverlay(); });
+closeBtn1.addEventListener('click', closeOverlay);
+closeBtn2.addEventListener('click', closeOverlay);
+
+/* Save manual entry */
+function commitManualEntry(){
+  const key = overlay.dataset.key;
+  if (!key) return;
+  const raw = entryInput.value.trim();
+  if (!raw){ closeOverlay(); return; }
+  const u = +overlay.dataset.u, v = +overlay.dataset.v;
+  upsertReading(key, raw, u, v);
+  saveBtn.disabled = state.readings.length===0;
+  renderPoints();
+  closeOverlay();
+}
+saveEntryBtn.addEventListener('click', commitManualEntry);
+entryInput.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') commitManualEntry(); });
+
+/* Override (connected only) */
+overrideBtn.addEventListener('click', ()=>{
+  if (!isBuddyConnected()){ alert('Connect to the BUDDY device first.'); return; }
+  const key = overlay.dataset.key;
+  const found = existingFor(key);
+  if (!found) return;
+  pendingKey = key;
+  pendingKeyMeta.set(key, {u:found.u, v:found.v});
+  inFlight = true;
+  sendRaw('?');
+  clearTimeout(askTimer);
+  askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingKeyMeta.delete(key); pendingKey=null; alert('No response within 2s.'); } },2000);
+});
+
+/* ---------- Firebase (persisted login) ---------- */
+let auth=null, db=null;
+(async ()=>{
+  try{
+    const appMod = await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js');
+    const authMod= await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js');
+    const fsMod  = await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js');
+
+    const firebaseConfig = {
+      apiKey:"AIzaSyCYlPYVyeUMpcr8qgUTifHJiOCayhh7QCQ",
+      authDomain:"rink-buddy-6f6ed.firebaseapp.com",
+      projectId:"rink-buddy-6f6ed",
+      storageBucket:"rink-buddy-6f6ed.appspot.com",
+      messagingSenderId:"1096930052063",
+      appId:"1:1096930052063:web:6b97608f1cdd3f5111666a",
+      measurementId:"G-7HPRJ6T9LD"
+    };
+
+    const app = (appMod.getApps().length ? appMod.getApps()[0] : appMod.initializeApp(firebaseConfig));
+    auth = authMod.getAuth(app);
+    db   = fsMod.getFirestore(app);
+    try { await authMod.setPersistence(auth, authMod.browserLocalPersistence); } catch {}
+
+    authMod.onAuthStateChanged(auth, async (user)=>{
+      if (!user) return;
+      state.uid = user.uid;
+
+      // Load template names
+      try{
+        const usersDoc = fsMod.doc(db, 'users', state.uid);
+        const tplCol   = fsMod.collection(usersDoc, 'templates');
+        const snap     = await fsMod.getDocs(tplCol);
+        state.allNames = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
+        templateSelect.innerHTML = `<option value="">Select a template…</option>`;
+        state.allNames.forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=n; templateSelect.appendChild(o); });
+      }catch(e){ console.error('template list', e); }
+    });
+
+    /* Load template */
+    templateSelect.addEventListener('change', async e=>{
+      if (!db || !state.uid) { alert('Not signed in.'); e.target.value=''; return; }
+      const name=e.target.value;
+      state.readings=[]; saveBtn.disabled=true;
+      if (!name){ clearRendered(); doorEl.style.display='none'; drawRink(); return; }
+      try{
+        const docRef = fsMod.doc(fsMod.collection(fsMod.doc(db,'users',state.uid),'templates'), name);
+        const docSnap= await fsMod.getDoc(docRef);
+        if(!docSnap.exists()) return;
+        const data=docSnap.data();
+
+        // canvas hints
+        state.centerY = typeof data.centerY==='number'?data.centerY:0.5;
+        if(typeof data.imgW==='number') state.naturalW=data.imgW;
+        if(typeof data.imgH==='number') state.naturalH=data.imgH;
+
+        // points
+        state.points=(data.points||[]).map(p=>({
+          id:p.id||`pt_${Math.random().toString(36).slice(2,8)}`,
+          u:+p.u, v:+p.v, mode:p.mode==='single'?'single':'mirrored'
+        }));
+
+        // door
+        if (data.door && Number.isFinite(data.door.edge) && Number.isFinite(data.door.t)){
+          state.doorCanon = { edge: data.door.edge|0, t: +data.door.t };
+          doorEl.style.display = 'flex';
+        } else {
+          state.doorCanon = { edge:0, t:0.5 };
+          doorEl.style.display = 'none';
         }
-      }, 2000);
-    }
 
-    // UI handlers
-    btnConnect.addEventListener('click', connect);
-    btnDisconnect.addEventListener('click', safeDisconnect);
-    btnSend.addEventListener('click', sendInput);
-    btnAsk.addEventListener('click', askOnce);
-    txInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendInput(); });
+        state.currentName=name;
+        applyLayout();
+      }catch(err){ console.error('load template', err); }
+    });
 
-    setConnectedUI(false);
-    log('Click <b>Connect</b> to select your device. If it doesn’t appear, enable <b>Show all devices</b>.');
-  </script>
+    /* Save variance */
+    saveBtn.addEventListener('click', async ()=>{
+      if (!db || !state.uid){ alert('Sign in required.'); return; }
+      if (!state.currentName){ alert('Pick a template first.'); return; }
+      if (!state.readings.length){ alert('Take at least one reading.'); return; }
+      try{
+        await fsMod.addDoc(fsMod.collection(fsMod.doc(db,'users',state.uid),'variances'), {
+          templateName: state.currentName,
+          rinkName: selRink.value, padName: selPad.value, employeeName: selEmp.value,
+          readings: state.readings, centerY: state.centerY,
+          imgW: state.naturalW, imgH: state.naturalH, createdAt: fsMod.serverTimestamp(),
+          door: state.doorCanon
+        });
+        alert('Variance saved.');
+      }catch(e){ console.error('save variance', e); alert('Save failed.'); }
+    });
+
+  } catch (err){
+    console.error('firebase import', err);
+  }
+})();
+</script>
 </body>
 </html>
