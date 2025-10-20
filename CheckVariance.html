@@ -243,6 +243,7 @@ const state={
   doorDisp: { edge:0, t:0.5 },
   doorLen:100, doorThick:20
 };
+
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 function setCSS(varName, px){ document.documentElement.style.setProperty(varName, Math.round(px)+'px'); }
 function setCanvasSize(w,h){
@@ -335,7 +336,7 @@ function renderPoints(){
         dot.className = 'dot tiny';
         dot.style.left = left; dot.style.top = top;
         dot.dataset.key = key;
-        dot.addEventListener('click', ()=>openViewOverlay(key));
+        dot.addEventListener('click', ()=>handleReadingPress(key));
         view.appendChild(dot);
 
         const lab = document.createElement('div');
@@ -344,7 +345,7 @@ function renderPoints(){
         lab.style.left = left; lab.style.top = top;
         if ((pos.y - labelOffsetPx) < 0) lab.classList.add('below');
         lab.dataset.key = key;
-        lab.addEventListener('click', ()=>openViewOverlay(key));
+        lab.addEventListener('click', ()=>handleReadingPress(key));
         view.appendChild(lab);
       } else {
         const btn = document.createElement('button');
@@ -450,7 +451,19 @@ connectBtn.addEventListener('click', async ()=>{
     const device = await navigator.bluetooth.requestDevice({
       filters:[{ name:'BUDDY' }], optionalServices:[NUS_SERVICE_UUID]
     });
-    device.addEventListener('gattserverdisconnected', ()=>{ setBleUI(false); });
+    device.addEventListener('gattserverdisconnected', ()=>{
+      setBleUI(false);
+      // If Override view is open, flip to manual entry instantly
+      if (overlay.classList.contains('show') && viewMode.style.display === 'block'){
+        const key = overlay.dataset.key;
+        const r = existingFor(key);
+        if (r){
+          overlay.dataset.u = String(r.u);
+          overlay.dataset.v = String(r.v);
+          openEntryOverlay(key, r.value);
+        }
+      }
+    });
     const server = await device.gatt.connect();
     const service= await server.getPrimaryService(NUS_SERVICE_UUID);
     const tx=await service.getCharacteristic(NUS_TX_CHAR_UUID);
@@ -487,20 +500,19 @@ async function sendRaw(s){ if(ble.connected&&ble.rx){ try{ await ble.rx.writeVal
 /* ---------- Dot behavior ---------- */
 const pendingKeyMeta = new Map();
 
+/* Gray dot press */
 function handleDotPress(btn){
   const key = btn.dataset.key;
   const u = +btn.dataset.u, v = +btn.dataset.v;
 
+  // Decide *now* whether manual or override path
   if (!isBuddyConnected()){
-    // Manual entry mode
-    openEntryOverlay(key, (existingFor(key)||{value:''}).value);
-    // store target u/v so Save knows where to write
     overlay.dataset.u = String(u);
     overlay.dataset.v = String(v);
+    openEntryOverlay(key, (existingFor(key)||{value:''}).value);
     return;
   }
 
-  // Connected to BUDDY: send '?'
   if (inFlight) return;
   pendingKey = key;
   pendingKeyMeta.set(key, {u, v});
@@ -508,6 +520,19 @@ function handleDotPress(btn){
   sendRaw('?');
   clearTimeout(askTimer);
   askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingKeyMeta.delete(key); pendingKey=null; alert('No response within 2s.'); } },2000);
+}
+
+/* Existing reading press (tiny dot or label) */
+function handleReadingPress(key){
+  const r = existingFor(key);
+  if (!r) return;
+  if (isBuddyConnected()){
+    openViewOverlay(key);  // Override/Close
+  } else {
+    overlay.dataset.u = String(r.u);
+    overlay.dataset.v = String(r.v);
+    openEntryOverlay(key, r.value); // Save/Close with focused input
+  }
 }
 
 function existingFor(key){ return state.readings.find(r=>r.key===key); }
@@ -534,9 +559,7 @@ function openEntryOverlay(key, prefill=''){
   overlay.classList.add('show');
   overlay.setAttribute('aria-hidden','false');
 
-  // Prepare the input: prefill, select, and focus so typing can start immediately
   entryInput.value = String(prefill ?? '');
-  // defer selection to next frame to ensure it's rendered
   requestAnimationFrame(()=>{
     entryInput.focus();
     entryInput.select();
@@ -570,7 +593,17 @@ entryInput.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') commitManua
 
 /* Override (connected only) */
 overrideBtn.addEventListener('click', ()=>{
-  if (!isBuddyConnected()){ alert('Connect to the BUDDY device first.'); return; }
+  if (!isBuddyConnected()){
+    // If connection was lost while open, switch to manual entry
+    const key = overlay.dataset.key;
+    const r = existingFor(key);
+    if (r){
+      overlay.dataset.u = String(r.u);
+      overlay.dataset.v = String(r.v);
+      openEntryOverlay(key, r.value);
+    }
+    return;
+  }
   const key = overlay.dataset.key;
   const found = existingFor(key);
   if (!found) return;
