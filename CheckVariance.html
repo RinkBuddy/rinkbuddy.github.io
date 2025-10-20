@@ -8,11 +8,9 @@
   :root {
     --btn:#1f7aff; --muted:#9fb0d0; --hdrH:64px;
     --blue:#4da3ff; --gray:#141824;
-
-    /* Sizes computed in JS */
-    --touch-dot:40px;    /* large tappable (gray) */
-    --tiny-dot:10px;     /* tiny blue dot like View Variance */
-    --label-fontpx:12px; /* value label size */
+    --touch-dot:40px;    /* big tappable */
+    --tiny-dot:10px;     /* tiny post-reading */
+    --label-fontpx:12px; /* value label */
   }
   *{box-sizing:border-box}
   html,body{height:100%}
@@ -54,8 +52,7 @@
   }
   canvas#rink { display:block; width:100%; height:100%; }
 
-  /* --- POINTS --- */
-  /* Large gray tappable (pre-reading) */
+  /* Big gray tappable (pre-reading) */
   .dot{
     position:absolute; transform:translate(-50%,-50%);
     width:var(--touch-dot); height:var(--touch-dot);
@@ -64,24 +61,20 @@
     box-shadow:0 4px 12px rgba(0,0,0,.4);
     display:block; user-select:none; cursor:pointer;
   }
-
-  /* Tiny blue dot (post-reading) */
+  /* Tiny blue + label (post-reading) */
   .dot.tiny{
     width:var(--tiny-dot); height:var(--tiny-dot);
     border:0; background:var(--blue);
     box-shadow:0 2px 6px rgba(0,0,0,.25);
   }
-
-  /* Value labels (clickable) */
   .vlabel{
-    position:absolute; transform:translate(-50%,-100%); /* default: above */
+    position:absolute; transform:translate(-50%,-100%);
     color:#000; font-weight:900; font-size:var(--label-fontpx); line-height:1; white-space:nowrap;
-    user-select:none; text-shadow:none; cursor:pointer;
-    /* better legibility on busy ice */
+    cursor:pointer; user-select:none;
     background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:6px;
     border:1px solid rgba(255,255,255,0.12);
   }
-  .vlabel.below{ transform:translate(-50%, 0%); } /* flip below if top would clip */
+  .vlabel.below{ transform:translate(-50%, 0%); }
 
   /* Door (read-only) */
   .door{
@@ -96,9 +89,7 @@
   /* Overlay */
   .overlay{ position:fixed; inset:0; display:none; place-items:center; z-index:60; }
   .overlay.show{ display:grid; }
-  .overlay::before{
-    content:""; position:absolute; inset:0; background:rgba(0,0,0,.55);
-  }
+  .overlay::before{ content:""; position:absolute; inset:0; background:rgba(0,0,0,.55); }
   .modal{
     position:relative; z-index:1;
     background:rgba(77,163,255,.16);
@@ -110,6 +101,15 @@
   .big-value{ font-size:56px; line-height:1; font-weight:900; text-align:center; color:#e9f1ff; margin:8px 6px 16px; }
   .actions{ display:flex; gap:10px; justify-content:flex-end }
   .actions .btn.secondary{ background:#2a354f; border-color:#3a4a6e }
+
+  /* Manual entry field */
+  .entry{
+    display:flex; gap:8px; align-items:center; justify-content:center; margin:8px 0 16px;
+  }
+  .entry input{
+    width:220px; background:#0b1324; color:#e9f1ff; border:1px solid #29406f; border-radius:10px;
+    padding:10px 12px; font-weight:800; font-size:20px; text-align:center; outline:none;
+  }
 
   .hint{ color:#9fb0d0; margin:10px 12px 18px }
 
@@ -176,10 +176,25 @@
 <div id="overlay" class="overlay" aria-hidden="true">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ovTitle">
     <h2 id="ovTitle">Current value</h2>
-    <div id="bigValue" class="big-value">—</div>
-    <div class="actions">
-      <button id="overrideBtn" class="btn">Override</button>
-      <button id="closeBtn" class="btn secondary">Close</button>
+
+    <!-- View/Override mode -->
+    <div id="viewMode" style="display:none">
+      <div id="bigValue" class="big-value">—</div>
+      <div class="actions">
+        <button id="overrideBtn" class="btn">Override</button>
+        <button id="closeBtn1" class="btn secondary">Close</button>
+      </div>
+    </div>
+
+    <!-- Manual entry mode -->
+    <div id="entryMode" style="display:none">
+      <div class="entry">
+        <input id="entryInput" type="text" inputmode="decimal" autocomplete="off" />
+      </div>
+      <div class="actions">
+        <button id="saveEntryBtn" class="btn">Save</button>
+        <button id="closeBtn2" class="btn secondary">Close</button>
+      </div>
     </div>
   </div>
 </div>
@@ -204,11 +219,16 @@ const connectBtn = document.getElementById('connectBtn');
 const saveBtn = document.getElementById('saveBtn');
 const bleStatus = document.getElementById('bleStatus');
 
-/* Overlay */
+/* Overlay refs */
 const overlay = document.getElementById('overlay');
+const viewMode = document.getElementById('viewMode');
+const entryMode = document.getElementById('entryMode');
 const bigValue = document.getElementById('bigValue');
 const overrideBtn = document.getElementById('overrideBtn');
-const closeBtn = document.getElementById('closeBtn');
+const closeBtn1 = document.getElementById('closeBtn1');
+const closeBtn2 = document.getElementById('closeBtn2');
+const entryInput = document.getElementById('entryInput');
+const saveEntryBtn = document.getElementById('saveEntryBtn');
 
 /* ---------- Immediate wiring ---------- */
 homeBtn.addEventListener('click', ()=>{ location.href='index.html'; });
@@ -223,7 +243,6 @@ const state={
   doorDisp: { edge:0, t:0.5 },
   doorLen:100, doorThick:20
 };
-
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 function setCSS(varName, px){ document.documentElement.style.setProperty(varName, Math.round(px)+'px'); }
 function setCanvasSize(w,h){
@@ -255,11 +274,6 @@ function applyLayout(){
   let w=availW, h=w/aspect; if(h>availH){ h=availH; w=h*aspect; }
   setCanvasSize(w,h);
 
-  /* Sizes:
-     - Big tappable (gray) ~ 8–10% of min side
-     - Tiny blue dot like View Variance ~ 1.5% of min side
-     - Label font based on long side (slightly larger on desktop)
-  */
   const minSide = Math.min(canvas.width, canvas.height);
   const longSide = Math.max(canvas.width, canvas.height);
   const touchDot = Math.max(24, Math.round(minSide * 0.10));
@@ -271,7 +285,7 @@ function applyLayout(){
   setCSS('--tiny-dot', tinyDot);
   setCSS('--label-fontpx', labelPx);
 
-  // Door size (same math as templates)
+  // Door size
   state.doorLen   = Math.round(longSide * 0.20 * 0.6);
   state.doorThick = Math.max(8, Math.round(state.doorLen * 0.16));
   doorEl.style.width = state.doorLen + 'px';
@@ -295,11 +309,6 @@ function uvToCanvas(u,v){
   const W=canvas.width, H=canvas.height;
   return state.mobile ? {x:u*W, y:v*H} : {x:v*W, y:(1-u)*H};
 }
-
-/* Render all points:
-   - If we already have a reading for key -> tiny blue dot + label
-   - Else -> big gray tappable dot
-*/
 function clearRendered(){
   view.querySelectorAll('.dot').forEach(n=>n.remove());
   view.querySelectorAll('.vlabel').forEach(n=>n.remove());
@@ -311,7 +320,6 @@ function renderPoints(){
   const labelPx = parseFloat(styles.getPropertyValue('--label-fontpx')) || 12;
   const labelOffsetPx = Math.max(10, Math.round(Math.max(labelPx * 0.9, tinyDotPx * 1.2)));
 
-  // Build a quick map for readings
   const rMap = new Map(state.readings.map(r=>[r.key, r]));
 
   state.points.forEach(pt=>{
@@ -323,34 +331,28 @@ function renderPoints(){
 
       const existing = rMap.get(key);
       if (existing){
-        // Tiny blue + label
         const dot = document.createElement('div');
         dot.className = 'dot tiny';
         dot.style.left = left; dot.style.top = top;
         dot.dataset.key = key;
-        dot.addEventListener('click', ()=>openOverlayForKey(key)); // tiny dot also opens
+        dot.addEventListener('click', ()=>openViewOverlay(key));
         view.appendChild(dot);
 
         const lab = document.createElement('div');
         lab.className = 'vlabel';
         lab.textContent = String(existing.value);
         lab.style.left = left; lab.style.top = top;
-
-        // place below if would clip at top
-        const pxY = pos.y;
-        if ((pxY - labelOffsetPx) < 0) lab.classList.add('below');
-
+        if ((pos.y - labelOffsetPx) < 0) lab.classList.add('below');
         lab.dataset.key = key;
-        lab.addEventListener('click', ()=>openOverlayForKey(key));
+        lab.addEventListener('click', ()=>openViewOverlay(key));
         view.appendChild(lab);
       } else {
-        // Big gray tappable
         const btn = document.createElement('button');
         btn.type='button';
         btn.className='dot';
         btn.style.left = left; btn.style.top = top;
         btn.dataset.key=key; btn.dataset.u=String(u); btn.dataset.v=String(v);
-        btn.addEventListener('click', ()=>handleGrayPress(btn));
+        btn.addEventListener('click', ()=>handleDotPress(btn));
         view.appendChild(btn);
       }
     };
@@ -427,13 +429,16 @@ window.addEventListener('resize', applyLayout);
 window.addEventListener('orientationchange', applyLayout);
 new ResizeObserver(()=>applyLayout()).observe(document.querySelector('header'));
 
-/* ---------- BLE (Nordic UART “?” flow) ---------- */
+/* ---------- BLE (must be device named "BUDDY") ---------- */
 const enc=new TextEncoder(), dec=new TextDecoder();
 const NUS_SERVICE_UUID='6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_RX_CHAR_UUID='6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_TX_CHAR_UUID='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 let ble={device:null,server:null,service:null,rx:null,tx:null,connected:false}, inFlight=false, pendingKey=null, askTimer=null;
 
+function isBuddyConnected(){
+  return !!(ble.connected && ble.device && (ble.device.name||'').trim() === 'BUDDY');
+}
 function setBleUI(connected){
   ble.connected = !!connected;
   bleStatus.textContent = connected ? 'Connected' : 'Disconnected';
@@ -442,7 +447,9 @@ function setBleUI(connected){
 }
 connectBtn.addEventListener('click', async ()=>{
   try{
-    const device = await navigator.bluetooth.requestDevice({filters:[{name:'BUDDY'}],optionalServices:[NUS_SERVICE_UUID]});
+    const device = await navigator.bluetooth.requestDevice({
+      filters:[{ name:'BUDDY' }], optionalServices:[NUS_SERVICE_UUID]
+    });
     device.addEventListener('gattserverdisconnected', ()=>{ setBleUI(false); });
     const server = await device.gatt.connect();
     const service= await server.getPrimaryService(NUS_SERVICE_UUID);
@@ -456,85 +463,123 @@ connectBtn.addEventListener('click', async ()=>{
 });
 function handleNotify(e){
   const text=dec.decode(e.target.value).trim();
-  const value=(text.match(/-?\d+(\.\d+)?/)||[])[0]||text; // tolerant parse
+  const value=(text.match(/-?\d+(\.\d+)?/)||[])[0]||text;
 
   inFlight=false; clearTimeout(askTimer);
 
   if (pendingKey){
-    // Find dot metadata for this key
-    // We stored u/v when we sent the request
     const meta = pendingKeyMeta.get(pendingKey);
     if (meta){
       const {u,v} = meta;
-      // upsert
-      const i = state.readings.findIndex(r=>r.key===pendingKey);
-      const rec = { key: pendingKey, value, u, v };
-      if (i>=0) state.readings[i]=rec; else state.readings.push(rec);
-
-      // Refresh UI: convert big gray -> tiny + label
+      upsertReading(pendingKey, value, u, v);
       renderPoints();
-
-      // If overlay is open for this key, update big readout
       if (overlay.dataset.key === pendingKey){
         bigValue.textContent = String(value);
       }
     }
-    pendingKey = null;
     pendingKeyMeta.delete(pendingKey);
+    pendingKey=null;
     saveBtn.disabled = state.readings.length===0;
   }
 }
 async function sendRaw(s){ if(ble.connected&&ble.rx){ try{ await ble.rx.writeValueWithoutResponse(enc.encode(s)); }catch(e){ console.error(e); } } }
 
-/* keep small metadata for pending key -> u,v */
+/* ---------- Dot behavior ---------- */
 const pendingKeyMeta = new Map();
 
-/* Gray press: send '?' and remember key/u/v; (dot converts after notify) */
-function handleGrayPress(btn){
-  if (!ble.connected){ alert('Connect to the BLE device first.'); return; }
-  if (inFlight) return;
+function handleDotPress(btn){
   const key = btn.dataset.key;
   const u = +btn.dataset.u, v = +btn.dataset.v;
 
+  if (!isBuddyConnected()){
+    // Manual entry mode
+    openEntryOverlay(key, (existingFor(key)||{value:''}).value);
+    // store target u/v so Save knows where to write
+    overlay.dataset.u = String(u);
+    overlay.dataset.v = String(v);
+    return;
+  }
+
+  // Connected to BUDDY: send '?'
+  if (inFlight) return;
   pendingKey = key;
   pendingKeyMeta.set(key, {u, v});
   inFlight=true;
   sendRaw('?');
   clearTimeout(askTimer);
-  askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingKey=null; pendingKeyMeta.delete(key); alert('No response within 2s.'); } },2000);
+  askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingKeyMeta.delete(key); pendingKey=null; alert('No response within 2s.'); } },2000);
 }
 
-/* Overlay open/close + Override */
-function openOverlayForKey(key){
-  const found = state.readings.find(r=>r.key===key);
-  bigValue.textContent = found ? String(found.value) : '—';
+function existingFor(key){ return state.readings.find(r=>r.key===key); }
+function upsertReading(key, value, u, v){
+  const i = state.readings.findIndex(r=>r.key===key);
+  const rec = { key, value, u, v };
+  if (i>=0) state.readings[i]=rec; else state.readings.push(rec);
+}
+
+/* ---------- Overlay modes ---------- */
+function openViewOverlay(key){
+  const found = existingFor(key);
   overlay.dataset.key = key;
+  viewMode.style.display = 'block';
+  entryMode.style.display = 'none';
+  bigValue.textContent = found ? String(found.value) : '—';
   overlay.classList.add('show');
   overlay.setAttribute('aria-hidden','false');
 }
-overlay.addEventListener('click', (e)=>{
-  if (e.target === overlay){
-    overlay.classList.remove('show');
-    overlay.setAttribute('aria-hidden','true');
-  }
-});
-closeBtn.addEventListener('click', ()=>{
+function openEntryOverlay(key, prefill=''){
+  overlay.dataset.key = key;
+  viewMode.style.display = 'none';
+  entryMode.style.display = 'block';
+  overlay.classList.add('show');
+  overlay.setAttribute('aria-hidden','false');
+
+  // Prepare the input: prefill, select, and focus so typing can start immediately
+  entryInput.value = String(prefill ?? '');
+  // defer selection to next frame to ensure it's rendered
+  requestAnimationFrame(()=>{
+    entryInput.focus();
+    entryInput.select();
+  });
+}
+function closeOverlay(){
   overlay.classList.remove('show');
   overlay.setAttribute('aria-hidden','true');
-});
-overrideBtn.addEventListener('click', ()=>{
-  if (!ble.connected){ alert('Connect to the BLE device first.'); return; }
+  overlay.dataset.key = '';
+  delete overlay.dataset.u;
+  delete overlay.dataset.v;
+}
+overlay.addEventListener('click', (e)=>{ if (e.target === overlay) closeOverlay(); });
+closeBtn1.addEventListener('click', closeOverlay);
+closeBtn2.addEventListener('click', closeOverlay);
+
+/* Save manual entry */
+function commitManualEntry(){
   const key = overlay.dataset.key;
   if (!key) return;
-  // Need u/v for this key to upsert on notify; grab from current reading
-  const found = state.readings.find(r=>r.key===key);
+  const raw = entryInput.value.trim();
+  if (!raw){ closeOverlay(); return; }
+  const u = +overlay.dataset.u, v = +overlay.dataset.v;
+  upsertReading(key, raw, u, v);
+  saveBtn.disabled = state.readings.length===0;
+  renderPoints();
+  closeOverlay();
+}
+saveEntryBtn.addEventListener('click', commitManualEntry);
+entryInput.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') commitManualEntry(); });
+
+/* Override (connected only) */
+overrideBtn.addEventListener('click', ()=>{
+  if (!isBuddyConnected()){ alert('Connect to the BUDDY device first.'); return; }
+  const key = overlay.dataset.key;
+  const found = existingFor(key);
   if (!found) return;
   pendingKey = key;
   pendingKeyMeta.set(key, {u:found.u, v:found.v});
   inFlight = true;
   sendRaw('?');
   clearTimeout(askTimer);
-  askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingKey=null; pendingKeyMeta.delete(key); alert('No response within 2s.'); } },2000);
+  askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingKeyMeta.delete(key); pendingKey=null; alert('No response within 2s.'); } },2000);
 });
 
 /* ---------- Firebase (persisted login) ---------- */
@@ -608,7 +653,7 @@ let auth=null, db=null;
         }
 
         state.currentName=name;
-        applyLayout();    // redraw everything with correct sizing/orientation
+        applyLayout();
       }catch(err){ console.error('load template', err); }
     });
 
