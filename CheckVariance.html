@@ -136,14 +136,14 @@
 <header>
   <div class="left">
     <button id="homeBtn" class="btn secondary">Home</button>
-    <label>Rink Name:
-      <select id="selRink"><option>Scotiabank Arena</option></select>
+    <label>Rink:
+      <select id="selRink"><option value="">—</option></select>
     </label>
-    <label>Pad Name:
-      <select id="selPad"><option>North</option></select>
+    <label>Pad:
+      <select id="selPad"><option value="">—</option></select>
     </label>
-    <label>Employee Name:
-      <select id="selEmp"><option>Bob</option></select>
+    <label>Employee:
+      <select id="selEmp"><option value="">—</option></select>
     </label>
   </div>
 
@@ -615,13 +615,13 @@ overrideBtn.addEventListener('click', ()=>{
   askTimer=setTimeout(()=>{ if(inFlight){ inFlight=false; pendingKeyMeta.delete(key); pendingKey=null; alert('No response within 2s.'); } },2000);
 });
 
-/* ---------- Firebase (persisted login) ---------- */
-let auth=null, db=null;
+/* ---------- Firebase (persisted login) + Defaults (Arenas/Pads/Employees) ---------- */
+let auth=null, db=null, fsMod=null, authMod=null;
 (async ()=>{
   try{
     const appMod = await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js');
-    const authMod= await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js');
-    const fsMod  = await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js');
+    authMod= await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js');
+    fsMod  = await import('https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js');
 
     const firebaseConfig = {
       apiKey:"AIzaSyCYlPYVyeUMpcr8qgUTifHJiOCayhh7QCQ",
@@ -638,16 +638,79 @@ let auth=null, db=null;
     db   = fsMod.getFirestore(app);
     try { await authMod.setPersistence(auth, authMod.browserLocalPersistence); } catch {}
 
+    // Helpers matching Settings structure
+    const defaultsDoc = (uid)=> fsMod.doc(db, 'users', uid, 'defaults', 'root');
+    const arenasCol   = (uid)=> fsMod.collection(defaultsDoc(uid), 'arenas');
+    const padsCol     = (uid, arenaId)=> fsMod.collection(fsMod.doc(arenasCol(uid), arenaId), 'pads');
+    const empsCol     = (uid)=> fsMod.collection(defaultsDoc(uid), 'employees');
+
+    const templatesColRef = (uid)=> fsMod.collection(fsMod.doc(db,'users',uid),'templates');
+    const templateDocRef  = (uid,name)=> fsMod.doc(templatesColRef(uid), name);
+
+    // Populate selects from defaults, choose first alphabetically
+    async function loadDefaultsLists(uid){
+      // Arenas
+      let arenaIds=[];
+      try{
+        const snap = await fsMod.getDocs(arenasCol(uid));
+        arenaIds = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
+      }catch(e){ console.error('load arenas', e); }
+      selRink.innerHTML = arenaIds.length ? '' : '<option value="">—</option>';
+      arenaIds.forEach(id=>{
+        const o=document.createElement('option'); o.value=id; o.textContent=id; selRink.appendChild(o);
+      });
+      if (arenaIds.length){ selRink.value = arenaIds[0]; }
+
+      // Pads for selected arena
+      await refreshPads(uid);
+
+      // Employees
+      let empIds=[];
+      try{
+        const snap = await fsMod.getDocs(empsCol(uid));
+        empIds = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
+      }catch(e){ console.error('load employees', e); }
+      selEmp.innerHTML = empIds.length ? '' : '<option value="">—</option>';
+      empIds.forEach(id=>{
+        const o=document.createElement('option'); o.value=id; o.textContent=id; selEmp.appendChild(o);
+      });
+      if (empIds.length){ selEmp.value = empIds[0]; }
+    }
+
+    async function refreshPads(uid){
+      const arenaId = selRink.value;
+      if (!arenaId){
+        selPad.innerHTML = '<option value="">—</option>';
+        return;
+      }
+      try{
+        const snap = await fsMod.getDocs(padsCol(uid, arenaId));
+        const padIds = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
+        selPad.innerHTML = padIds.length ? '' : '<option value="">—</option>';
+        padIds.forEach(id=>{
+          const o=document.createElement('option'); o.value=id; o.textContent=id; selPad.appendChild(o);
+        });
+        if (padIds.length){ selPad.value = padIds[0]; }
+      }catch(e){ console.error('load pads', e); selPad.innerHTML = '<option value="">—</option>'; }
+    }
+
+    selRink.addEventListener('change', async ()=>{
+      if (!state.uid) return;
+      await refreshPads(state.uid);
+    });
+
+    // Auth & initial data
     authMod.onAuthStateChanged(auth, async (user)=>{
       if (!user) return;
       state.uid = user.uid;
 
-      // Load template names
+      // Defaults lists
+      await loadDefaultsLists(state.uid);
+
+      // Templates
       try{
-        const usersDoc = fsMod.doc(db, 'users', state.uid);
-        const tplCol   = fsMod.collection(usersDoc, 'templates');
-        const snap     = await fsMod.getDocs(tplCol);
-        state.allNames = snap.docs.map(d=>d.id).sort((a,b)=>a.localeCompare(b));
+        const snap = await fsMod.getDocs(templatesColRef(state.uid));
+        state.allNames = snap.docs.map(d=>d.id).sort((a,b)=> a.localeCompare(b));
         templateSelect.innerHTML = `<option value="">Select a template…</option>`;
         state.allNames.forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=n; templateSelect.appendChild(o); });
       }catch(e){ console.error('template list', e); }
@@ -660,8 +723,7 @@ let auth=null, db=null;
       state.readings=[]; saveBtn.disabled=true;
       if (!name){ clearRendered(); doorEl.style.display='none'; drawRink(); return; }
       try{
-        const docRef = fsMod.doc(fsMod.collection(fsMod.doc(db,'users',state.uid),'templates'), name);
-        const docSnap= await fsMod.getDoc(docRef);
+        const docSnap= await fsMod.getDoc(templateDocRef(state.uid, name));
         if(!docSnap.exists()) return;
         const data=docSnap.data();
 
@@ -698,7 +760,9 @@ let auth=null, db=null;
       try{
         await fsMod.addDoc(fsMod.collection(fsMod.doc(db,'users',state.uid),'variances'), {
           templateName: state.currentName,
-          rinkName: selRink.value, padName: selPad.value, employeeName: selEmp.value,
+          rink: selRink.value || '',
+          pad: selPad.value || '',
+          employee: selEmp.value || '',
           readings: state.readings, centerY: state.centerY,
           imgW: state.naturalW, imgH: state.naturalH, createdAt: fsMod.serverTimestamp(),
           door: state.doorCanon
