@@ -118,6 +118,17 @@
     <label>Employee:
       <span id="txtEmp" style="color:#e9eef9;font-weight:800">—</span>
     </label>
+
+    <!-- Always-visible dataset stats -->
+    <label>Min:
+      <span id="txtMin" style="color:#e9eef9;font-weight:800">—</span>
+    </label>
+    <label>Avg:
+      <span id="txtAvg" style="color:#e9eef9;font-weight:800">—</span>
+    </label>
+    <label>Max:
+      <span id="txtMax" style="color:#e9eef9;font-weight:800">—</span>
+    </label>
   </div>
 
   <div class="center">
@@ -133,9 +144,9 @@
     <button id="modeBtn" class="iconBtn" title="Toggle topo">
       <img id="modeIcon" src="topomap.png" alt="Topo">
     </button>
-    <input id="rangeMin" class="rangeBox" type="number" step="0.01" value="-1.5" title="Min">
+    <input id="rangeMin" class="rangeBox" type="number" step="0.01" value="-1.50" title="Min">
     <img class="sepImg" src="topogradient.png" alt="Gradient">
-    <input id="rangeMax" class="rangeBox" type="number" step="0.01" value="1.5" title="Max">
+    <input id="rangeMax" class="rangeBox" type="number" step="0.01" value="1.50" title="Max">
   </div>
 </header>
 
@@ -167,6 +178,10 @@ const txtArena = document.getElementById('txtArena');
 const txtPad   = document.getElementById('txtPad');
 const txtEmp   = document.getElementById('txtEmp');
 
+const txtMin = document.getElementById('txtMin');
+const txtAvg = document.getElementById('txtAvg');
+const txtMax = document.getElementById('txtMax');
+
 const modeBtn  = document.getElementById('modeBtn');
 const modeIcon = document.getElementById('modeIcon');
 const rangeMinEl = document.getElementById('rangeMin');
@@ -178,7 +193,7 @@ const bandImg = new Image(); bandImg.src='transbandrink1.png';
 
 /* ---------- State ---------- */
 const state={
-  naturalW:600, naturalH:1200, mobile:false, rotated:false,
+  mobile:false, rotated:false,
   uid:null, readings:[], topoMode:false,
   doorCanon:{ edge:0, t:0.5 }, doorDisp:{ edge:0, t:0.5 },
   doorLen:100, doorThick:20
@@ -187,6 +202,7 @@ let hasDoorInData=false;
 
 /* ---------- Utils ---------- */
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const round2=(x)=>Number.isFinite(x)?Math.round(x*100)/100:0;
 function mix(a,b,t){return{r:Math.round(a.r+(b.r-a.r)*t),g:Math.round(a.g+(b.g-a.g)*t),b:Math.round(a.b+(b.b-a.b)*t)};}
 function roundedRectPath(g, x,y,w,h,r){
   const rr = Math.min(r, w/2, h/2);
@@ -391,7 +407,6 @@ function drawTopo(){
     return;
   }
 
-  // Build points in display space
   const pts=[];
   for(const r of state.readings){
     const v = Number(r.value);
@@ -404,23 +419,18 @@ function drawTopo(){
     return;
   }
 
-  // Current range (user-adjustable)
   let minV = Number(rangeMinEl.value);
   let maxV = Number(rangeMaxEl.value);
   if(!Number.isFinite(minV) || !Number.isFinite(maxV) || minV===maxV){
-    // Fallback: compute from dataset (min red, mean yellow, green = mean + |min|)
     const stats = computeDefaultRangeFromDataset();
-    minV = stats.min;
-    maxV = stats.max;
+    minV = stats.min; maxV = stats.max;
   }
   const midV = (minV + maxV)/2;
 
-  // Offscreen buffer
   const off = document.createElement('canvas');
   off.width = W; off.height = H;
   const octx = off.getContext('2d', { willReadFrequently:true });
 
-  // IDW field
   const img = octx.createImageData(W, H);
   const data = img.data;
   const K = Math.min(12, pts.length);
@@ -489,7 +499,7 @@ function drawTopo(){
   topoCanvas.style.display='block';
 }
 
-/* Compute defaults: yellow at mean, red at dataset min, green at mean+|min| */
+/* Defaults: red=min(dataset), yellow=mean(dataset), green=mean+|min|, all rounded to 2 dp */
 function computeDefaultRangeFromDataset(){
   let sum=0, n=0, vmin=Infinity;
   for(const r of state.readings){
@@ -498,7 +508,20 @@ function computeDefaultRangeFromDataset(){
   }
   const mean = n? (sum/n) : 0;
   const vmax = mean + Math.abs(vmin);
-  return { min:vmin, mid:mean, max:vmax };
+  const minR = round2(vmin===Infinity?0:vmin);
+  const avgR = round2(mean);
+  const maxR = round2(vmax);
+
+  // Update always-visible labels
+  txtMin.textContent = Number.isFinite(minR)?minR.toFixed(2):'—';
+  txtAvg.textContent = Number.isFinite(avgR)?avgR.toFixed(2):'—';
+  txtMax.textContent = Number.isFinite(maxR)?maxR.toFixed(2):'—';
+
+  // Set input defaults (user can edit later)
+  rangeMinEl.value = Number.isFinite(minR)?minR.toFixed(2):'0.00';
+  rangeMaxEl.value = Number.isFinite(maxR)?maxR.toFixed(2):'0.00';
+
+  return { min:minR, mid:avgR, max:maxR };
 }
 
 /* ---------- Boot + resize ---------- */
@@ -587,6 +610,7 @@ let auth=null, db=null;
         topoCanvas.style.display='none';
         state.topoMode=false; modeIcon.src='topomap.png';
         txtArena.textContent='—'; txtPad.textContent='—'; txtEmp.textContent='—';
+        txtMin.textContent='—'; txtAvg.textContent='—'; txtMax.textContent='—';
         doorEl.style.display='none'; drawRink(); return;
       }
       loadVariance(id);
@@ -605,7 +629,7 @@ let auth=null, db=null;
         txtPad.textContent   = d.padName  || '—';
         txtEmp.textContent   = d.employeeName || '—';
 
-        // Door and image dims
+        // Door
         if (d.door && Number.isFinite(d.door.edge) && Number.isFinite(d.door.t)){
           state.doorCanon = { edge: d.door.edge|0, t: +d.door.t };
           hasDoorInData = true;
@@ -621,10 +645,8 @@ let auth=null, db=null;
           key: r.key, value: +r.value, u:+r.u, v:+r.v
         })) : [];
 
-        // Default range per spec: red=min, yellow=mean, green=mean+|min|
-        const stats = computeDefaultRangeFromDataset();
-        rangeMinEl.value = stats.min;
-        rangeMaxEl.value = stats.max;
+        // Compute defaults and update labels and inputs (rounded to 2 dp)
+        computeDefaultRangeFromDataset();
 
         applyLayout();
         if(state.topoMode) drawTopo();
