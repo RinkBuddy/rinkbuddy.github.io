@@ -43,15 +43,13 @@
   }
   canvas#rink { display:block; width:100%; height:100%; }
 
-  /* Blue dots: solid, no outline, half-size (size set in JS via --dot-size) */
+  /* Dots: solid blue, no outline */
   .dot{
     position:absolute; transform:translate(-50%,-50%); width:var(--dot-size); height:var(--dot-size);
     border-radius:999px; border:0; background:var(--blue);
-    box-shadow:0 2px 6px rgba(0,0,0,.25);
-    user-select:none; pointer-events:none;
+    box-shadow:0 2px 6px rgba(0,0,0,.25); user-select:none; pointer-events:none;
   }
 
-  /* Value labels near dots, font size is dynamic via --label-fontpx */
   .vlabel{
     position:absolute; transform:translate(-50%,-100%);
     color:#000; font-weight:900; font-size:var(--label-fontpx); line-height:1; white-space:nowrap;
@@ -70,29 +68,17 @@
 
   .hint{ color:#9fb0d0; margin:10px 12px 18px }
 
-  /* Topo overlay canvas (same bounds as rink) */
+  /* Topo canvas (same bounds as rink) */
   #topoCanvas{
     position:absolute; inset:0; display:none; width:100%; height:100%;
-    pointer-events:none;
-    z-index:11;
-  }
-  /* Transparent banded overlay ABOVE topo */
-  #rinkOverlay{
-    position:absolute; inset:0; display:none; width:100%; height:100%;
-    object-fit:cover; pointer-events:none;
-    z-index:12;
+    pointer-events:none; z-index:11;
   }
 
-  .rangeBox{
-    background:#121623; color:#fff; border:1px solid #1f2637; border-radius:10px;
-    padding:8px 10px; width:96px; font-weight:700;
-  }
   .iconBtn{
     display:inline-flex; align-items:center; justify-content:center;
     width:44px; height:44px; border-radius:10px; background:#121623; border:1px solid #1f2637; cursor:pointer;
   }
   .iconBtn img{ width:26px; height:26px; display:block }
-  .sepImg{ width:120px; height:24px; object-fit:contain; display:block }
 
   @media (min-width: 901px){
     .stage{ min-height: calc(100vh - var(--hdrH)); }
@@ -142,9 +128,6 @@
     <button id="modeBtn" class="iconBtn" title="Toggle topo">
       <img id="modeIcon" src="topomap.png" alt="Topo">
     </button>
-    <input id="rangeMin" class="rangeBox" type="number" step="0.01" value="-1.5" title="Min">
-    <img class="sepImg" src="topogradient.png" alt="Gradient">
-    <input id="rangeMax" class="rangeBox" type="number" step="0.01" value="1.5" title="Max">
   </div>
 </header>
 
@@ -153,7 +136,6 @@
     <div id="view" class="viewport">
       <canvas id="rink"></canvas>
       <canvas id="topoCanvas"></canvas>
-      <img id="rinkOverlay" src="transbandrink1.png" alt="">
       <div id="door" class="door" style="display:none">DOOR</div>
     </div>
   </div>
@@ -162,14 +144,13 @@
 <p class="hint">Select a saved variance to view all readings. Use the map button to view the topographical heat map.</p>
 
 <script>
-/* ---------------- DOM refs ---------------- */
+/* ---------- DOM refs ---------- */
 const view   = document.getElementById('view');
 const canvas = document.getElementById('rink');
 const ctx    = canvas.getContext('2d', { willReadFrequently:true });
 const doorEl = document.getElementById('door');
 const topoCanvas = document.getElementById('topoCanvas');
 const topoCtx    = topoCanvas.getContext('2d', { willReadFrequently:true });
-const overlayImg = document.getElementById('rinkOverlay');
 
 const homeBtn = document.getElementById('homeBtn');
 const varianceSelect = document.getElementById('varianceSelect');
@@ -180,25 +161,24 @@ const txtEmp   = document.getElementById('txtEmp');
 
 const modeBtn  = document.getElementById('modeBtn');
 const modeIcon = document.getElementById('modeIcon');
-const rangeMinEl = document.getElementById('rangeMin');
-const rangeMaxEl = document.getElementById('rangeMax');
 
-/* ---------------- State ---------------- */
-const img = new Image(); img.src='rink1.png';
+/* ---------- Images ---------- */
+const rinkImg = new Image(); rinkImg.src='rink1.png';
+const bandImg = new Image(); bandImg.src='transbandrink1.png';
+
+/* ---------- State ---------- */
 const state={
-  naturalW:600, naturalH:1200, mobile:false, rotated:false, centerY:0.5,
-  points:[], uid:null, currentVarianceId:null,
-  readings:[],                      // [{key, value, u, v}]
-  doorCanon:{ edge:0, t:0.5 },      // portrait canonical
-  doorDisp: { edge:0, t:0.5 },
+  naturalW:600, naturalH:1200, mobile:false, rotated:false,
+  uid:null, readings:[], topoMode:false,
+  doorCanon:{ edge:0, t:0.5 }, doorDisp:{ edge:0, t:0.5 },
   doorLen:100, doorThick:20,
-  topoMode:false,
-  units:'in' // 'in' or 'mm'
+  stats:{ vmin:0, vmean:0, vmax:1 } // computed from dataset
 };
+let hasDoorInData=false;
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
-/* ---------------- Layout ---------------- */
+/* ---------- Layout ---------- */
 homeBtn.addEventListener('click', ()=>{ location.href='index.html'; });
 
 const styles = document.documentElement.style;
@@ -233,18 +213,15 @@ function applyLayout(){
   let w=availW, h=w/aspect; if(h>availH){ h=availH; w=h*aspect; }
   setCanvasSize(w,h);
 
-  /* Dot size and label size */
   const minSide = Math.min(canvas.width, canvas.height);
   const d = Math.max(2, Math.round(minSide * 0.015));
   styles.setProperty('--dot-size', d+'px');
 
   const longSide = Math.max(canvas.width, canvas.height);
-  const labelPx = state.mobile
-    ? Math.max(12, Math.round(longSide * 0.018))
-    : Math.max(14, Math.round(longSide * 0.024));
+  const labelPx = state.mobile ? Math.max(12, Math.round(longSide * 0.018))
+                               : Math.max(14, Math.round(longSide * 0.024));
   styles.setProperty('--label-fontpx', labelPx + 'px');
 
-  /* Door sizing */
   state.doorLen   = Math.round(longSide * 0.20 * 0.6);
   state.doorThick = Math.max(8, Math.round(state.doorLen * 0.16));
   doorEl.style.width = state.doorLen + 'px';
@@ -252,7 +229,6 @@ function applyLayout(){
   doorEl.style.fontSize = Math.round(state.doorThick*0.55) + 'px';
   doorEl.style.lineHeight = state.doorThick + 'px';
 
-  /* Redraw */
   state.doorDisp = doorCanonicalToDisplay(state.doorCanon);
   drawRink();
   if(state.topoMode){ drawTopo(); } else { renderDots(); positionDoor(); }
@@ -261,9 +237,9 @@ function drawRink(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   if(state.rotated){
     ctx.save(); ctx.translate(0, canvas.height); ctx.rotate(-Math.PI/2);
-    ctx.drawImage(img, 0, 0, canvas.height, canvas.width); ctx.restore();
+    ctx.drawImage(rinkImg, 0, 0, canvas.height, canvas.width); ctx.restore();
   } else {
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(rinkImg, 0, 0, canvas.width, canvas.height);
   }
 }
 function uvToCanvas(u,v){
@@ -305,8 +281,8 @@ function renderDots(){
   });
 }
 
-/* ---- DOOR mapping (portrait canonical -> current display) ---- */
-const CANON_TO_DISPLAY = [3,0,1,2]; // when rotated CW visually
+/* ---- Door mapping ---- */
+const CANON_TO_DISPLAY = [3,0,1,2];
 function doorCanonicalToDisplay(doorCanon){
   if (!doorCanon) return { edge:0, t:0.5 };
   let { edge:e, t } = doorCanon;
@@ -355,7 +331,7 @@ function positionDoor(){
   doorEl.style.transform = `translate(-50%,-50%) rotate(${angle}deg)`;
 }
 
-/* ---------------- Topo rendering ---------------- */
+/* ---------- Topo toggle ---------- */
 modeBtn.addEventListener('click', ()=>{
   state.topoMode = !state.topoMode;
   modeIcon.src = state.topoMode ? 'rinkmode.png' : 'topomap.png';
@@ -363,59 +339,44 @@ modeBtn.addEventListener('click', ()=>{
     clearDots();
     doorEl.style.display = 'none';
     topoCanvas.style.display = 'block';
-    overlayImg.style.display = 'block';  // show overlay over topo
     drawTopo();
   }else{
     topoCanvas.style.display = 'none';
-    overlayImg.style.display = 'none';   // hide overlay in rink mode
     drawRink();
     renderDots();
     positionDoor();
     if(hasDoorInData) doorEl.style.display = 'flex';
   }
 });
-[rangeMinEl, rangeMaxEl].forEach(el=>{
-  el.addEventListener('input', ()=>{
-    if(state.topoMode) drawTopo();
-  });
-});
 
-/* Unit heuristic retained for step granularity only */
-function decideUnitsFromReadings(readings){
-  let ones=0, twos=0;
-  for(const r of readings){
-    const v = Number(r.value);
-    if(!Number.isFinite(v)) continue;
-    const abs = Math.abs(v);
-    if(abs>=10 && abs<100) twos++;
-    else if(abs<10) ones++;
+/* ---------- Stats ---------- */
+function computeStats(){
+  let sum=0, n=0, vmin=Infinity;
+  for(const r of state.readings){
+    const v=+r.value; if(!Number.isFinite(v)) continue;
+    sum+=v; n++; if(v<vmin) vmin=v;
   }
-  if(twos>ones) return 'mm';
-  return 'in';
-}
-function setInputStepsByUnits(units){
-  if(units==='mm'){
-    rangeMinEl.step = '1';
-    rangeMaxEl.step = '1';
-  }else{
-    rangeMinEl.step = '0.01';
-    rangeMaxEl.step = '0.01';
-  }
+  const vmean = n? (sum/n) : 0;
+  const vmax = vmean + Math.abs(vmin);
+  // Guard equal range
+  const eps = 1e-6;
+  state.stats = {
+    vmin: Number.isFinite(vmin)?vmin:0,
+    vmean,
+    vmax: (Math.abs(vmax - vmin) < eps) ? vmean + 1 : vmax
+  };
 }
 
-/* Draw the topo heat map with fixed colors:
-   min -> red(#ff0000), mid -> yellow(#ffff00), max -> green(#00ff00)
-   Rounded corners radius = 14% of rink length (long side of canvas)
-*/
+/* ---------- Topo rendering ---------- */
+/* Fixed colors: red(min), yellow(mean), green(max) */
 function drawTopo(){
   const W = canvas.width, H = canvas.height;
+  if(!state.readings.length){
+    topoCtx.clearRect(0,0,W,H);
+    return;
+  }
 
-  // Prepare offscreen at CSS pixel resolution for speed
-  const off = document.createElement('canvas');
-  off.width = W; off.height = H;
-  const octx = off.getContext('2d', { willReadFrequently:true });
-
-  // Build sample points in DISPLAY pixel space (respect rotation)
+  // Build sample points in display space
   const pts=[];
   for(const r of state.readings){
     const v = Number(r.value);
@@ -423,25 +384,27 @@ function drawTopo(){
     const p = uvToCanvas(r.u, r.v);
     pts.push({x:p.x, y:p.y, v});
   }
-  octx.clearRect(0,0,W,H);
   if(!pts.length){
-    topoCtx.clearRect(0,0,topoCanvas.width, topoCanvas.height);
+    topoCtx.clearRect(0,0,W,H);
     return;
   }
 
-  const minV = Number(rangeMinEl.value);
-  const maxV = Number(rangeMaxEl.value);
-  if(!Number.isFinite(minV) || !Number.isFinite(maxV) || minV===maxV) return;
-  const midV = minV + (maxV - minV)/2;
+  const {vmin, vmean, vmax} = state.stats;
 
-  const cMin = {r:255,g:0,b:0};     // red
-  const cMid = {r:255,g:255,b:0};   // yellow
-  const cMax = {r:0,g:255,b:0};     // green
+  // Offscreen buffer
+  const off = document.createElement('canvas');
+  off.width = W; off.height = H;
+  const octx = off.getContext('2d', { willReadFrequently:true });
 
+  // IDW field
   const img = octx.createImageData(W, H);
   const data = img.data;
   const K = Math.min(12, pts.length);
   const pPow = 2;
+
+  const cMin = {r:255,g:0,b:0};     // red
+  const cMid = {r:255,g:255,b:0};   // yellow
+  const cMax = {r:0,g:255,b:0};     // green
 
   for(let y=0;y<H;y++){
     for(let x=0;x<W;x++){
@@ -460,13 +423,14 @@ function drawTopo(){
       }
       let v = sumW ? (sumV/sumW) : pts[0].v;
 
-      if(v<minV) v=minV; else if(v>maxV) v=maxV;
+      // Clamp to [vmin, vmax], map with mid at vmean
+      if(v<vmin) v=vmin; else if(v>vmax) v=vmax;
       let col;
-      if(v<=midV){
-        const t=(v-minV)/((midV-minV)||1);
+      if(v<=vmean){
+        const t=(v-vmin)/((vmean-vmin)||1);
         col = mix(cMin, cMid, t);
       }else{
-        const t=(v-midV)/((maxV-midV)||1);
+        const t=(v-vmean)/((vmax-vmean)||1);
         col = mix(cMid, cMax, t);
       }
       const i=(y*W+x)*4;
@@ -483,13 +447,24 @@ function drawTopo(){
   roundedRectPath(topoCtx, 0,0, W,H, r);
   topoCtx.clip();
 
-  // Draw the offscreen image respecting clip
+  // Draw the field
   topoCtx.drawImage(off, 0, 0, W, H);
+
+  // Draw the transparent band overlay, rotated/scaled exactly like rink
+  if(state.rotated){
+    topoCtx.save();
+    topoCtx.translate(0, H);
+    topoCtx.rotate(-Math.PI/2);
+    // When rotated, width/height swap just like rink draw
+    topoCtx.drawImage(bandImg, 0, 0, H, W);
+    topoCtx.restore();
+  }else{
+    topoCtx.drawImage(bandImg, 0, 0, W, H);
+  }
+
   topoCtx.restore();
 
-  // Ensure shown
-  topoCanvas.style.display = 'block';
-  overlayImg.style.display = 'block';
+  topoCanvas.style.display='block';
 }
 
 function mix(a,b,t){
@@ -514,20 +489,23 @@ function roundedRectPath(g, x,y,w,h,r){
   g.closePath();
 }
 
-/* draw ASAP (even before image/auth) */
+/* ---------- Boot + resize ---------- */
 applyLayout();
-let hasDoorInData = false;
-if (img.complete && img.naturalWidth>0){
-  state.naturalW=img.naturalWidth; state.naturalH=img.naturalHeight; applyLayout();
-}else{
-  img.onload = ()=>{ state.naturalW=img.naturalWidth||state.naturalW; state.naturalH=img.naturalHeight||state.naturalH; applyLayout(); if(state.topoMode) drawTopo(); };
-  img.onerror = ()=>{ applyLayout(); };
+function redrawForResize(){
+  applyLayout();
+  if(state.topoMode) drawTopo();
 }
-window.addEventListener('resize', ()=>{ applyLayout(); if(state.topoMode) drawTopo(); });
-window.addEventListener('orientationchange', ()=>{ applyLayout(); if(state.topoMode) drawTopo(); });
-new ResizeObserver(()=>{ applyLayout(); if(state.topoMode) drawTopo(); }).observe(document.querySelector('header'));
+if (rinkImg.complete && rinkImg.naturalWidth>0){
+  state.naturalW=rinkImg.naturalWidth; state.naturalH=rinkImg.naturalHeight; redrawForResize();
+}else{
+  rinkImg.onload = ()=>{ state.naturalW=rinkImg.naturalWidth||state.naturalW; state.naturalH=rinkImg.naturalHeight||state.naturalH; redrawForResize(); };
+  rinkImg.onerror = ()=>{ redrawForResize(); };
+}
+window.addEventListener('resize', redrawForResize);
+window.addEventListener('orientationchange', redrawForResize);
+new ResizeObserver(()=>redrawForResize()).observe(document.querySelector('header'));
 
-/* ---------------- Firebase (dynamic import; uses persisted login) ---------------- */
+/* ---------- Firebase ---------- */
 let auth=null, db=null;
 (async ()=>{
   try{
@@ -595,7 +573,6 @@ let auth=null, db=null;
         state.readings = [];
         clearDots();
         topoCanvas.style.display='none';
-        overlayImg.style.display='none';
         state.topoMode=false; modeIcon.src='topomap.png';
         txtArena.textContent='—'; txtPad.textContent='—'; txtEmp.textContent='—';
         doorEl.style.display='none'; drawRink(); return;
@@ -617,7 +594,6 @@ let auth=null, db=null;
         txtEmp.textContent   = d.employeeName || '—';
 
         // Canvas hints & door
-        state.centerY = Number.isFinite(d.centerY) ? d.centerY : 0.5;
         if(Number.isFinite(d.imgW)) state.naturalW = d.imgW;
         if(Number.isFinite(d.imgH)) state.naturalH = d.imgH;
 
@@ -636,32 +612,10 @@ let auth=null, db=null;
           key: r.key, value: +r.value, u:+r.u, v:+r.v
         })) : [];
 
-        // Unit heuristic for step granularity
-        state.units = decideUnitsFromReadings(state.readings);
-        setInputStepsByUnits(state.units);
+        // Stats for color mapping
+        computeStats();
 
-        // Default range = dataset min/max
-        if(state.readings.length){
-          let vmin = Infinity, vmax = -Infinity;
-          for(const r of state.readings){
-            const v = +r.value;
-            if(Number.isFinite(v)){
-              if(v < vmin) vmin = v;
-              if(v > vmax) vmax = v;
-            }
-          }
-          if(Number.isFinite(vmin) && Number.isFinite(vmax) && vmin !== vmax){
-            rangeMinEl.value = vmin;
-            rangeMaxEl.value = vmax;
-          }else{
-            // Fallback if all same: widen slightly
-            const base = Number.isFinite(vmin)?vmin:0;
-            rangeMinEl.value = base - 1;
-            rangeMaxEl.value = base + 1;
-          }
-        }
-
-        applyLayout(); // draws rink, dots/labels or topo if active
+        applyLayout();
         if(state.topoMode) drawTopo();
       }catch(e){
         console.error('load variance', e);
@@ -671,7 +625,6 @@ let auth=null, db=null;
 
   } catch (err){
     console.error('firebase import', err);
-    // Page still usable in static mode.
   }
 })();
 </script>
