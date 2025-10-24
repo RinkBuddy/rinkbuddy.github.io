@@ -73,7 +73,14 @@
   /* Topo overlay canvas (same bounds as rink) */
   #topoCanvas{
     position:absolute; inset:0; display:none; width:100%; height:100%;
-    pointer-events:none; /* view-only */
+    pointer-events:none;
+    z-index:11;
+  }
+  /* Transparent banded overlay ABOVE topo */
+  #rinkOverlay{
+    position:absolute; inset:0; display:none; width:100%; height:100%;
+    object-fit:cover; pointer-events:none;
+    z-index:12;
   }
 
   .rangeBox{
@@ -146,6 +153,7 @@
     <div id="view" class="viewport">
       <canvas id="rink"></canvas>
       <canvas id="topoCanvas"></canvas>
+      <img id="rinkOverlay" src="transbandrink1.png" alt="">
       <div id="door" class="door" style="display:none">DOOR</div>
     </div>
   </div>
@@ -161,6 +169,7 @@ const ctx    = canvas.getContext('2d', { willReadFrequently:true });
 const doorEl = document.getElementById('door');
 const topoCanvas = document.getElementById('topoCanvas');
 const topoCtx    = topoCanvas.getContext('2d', { willReadFrequently:true });
+const overlayImg = document.getElementById('rinkOverlay');
 
 const homeBtn = document.getElementById('homeBtn');
 const varianceSelect = document.getElementById('varianceSelect');
@@ -354,9 +363,11 @@ modeBtn.addEventListener('click', ()=>{
     clearDots();
     doorEl.style.display = 'none';
     topoCanvas.style.display = 'block';
+    overlayImg.style.display = 'block';  // show overlay over topo
     drawTopo();
   }else{
     topoCanvas.style.display = 'none';
+    overlayImg.style.display = 'none';   // hide overlay in rink mode
     drawRink();
     renderDots();
     positionDoor();
@@ -369,6 +380,7 @@ modeBtn.addEventListener('click', ()=>{
   });
 });
 
+/* Unit heuristic retained for step granularity only */
 function decideUnitsFromReadings(readings){
   let ones=0, twos=0;
   for(const r of readings){
@@ -381,16 +393,11 @@ function decideUnitsFromReadings(readings){
   if(twos>ones) return 'mm';
   return 'in';
 }
-
-function setDefaultRangeByUnits(units){
+function setInputStepsByUnits(units){
   if(units==='mm'){
-    rangeMinEl.value = -40;
-    rangeMaxEl.value =  40;
     rangeMinEl.step = '1';
     rangeMaxEl.step = '1';
   }else{
-    rangeMinEl.value = -1.5;
-    rangeMaxEl.value =  1.5;
     rangeMinEl.step = '0.01';
     rangeMaxEl.step = '0.01';
   }
@@ -402,7 +409,6 @@ function setDefaultRangeByUnits(units){
 */
 function drawTopo(){
   const W = canvas.width, H = canvas.height;
-  const dpr = window.devicePixelRatio || 1;
 
   // Prepare offscreen at CSS pixel resolution for speed
   const off = document.createElement('canvas');
@@ -414,7 +420,7 @@ function drawTopo(){
   for(const r of state.readings){
     const v = Number(r.value);
     if(!Number.isFinite(v)) continue;
-    const p = uvToCanvas(r.u, r.v); // already handles rotation rule
+    const p = uvToCanvas(r.u, r.v);
     pts.push({x:p.x, y:p.y, v});
   }
   octx.clearRect(0,0,W,H);
@@ -428,21 +434,17 @@ function drawTopo(){
   if(!Number.isFinite(minV) || !Number.isFinite(maxV) || minV===maxV) return;
   const midV = minV + (maxV - minV)/2;
 
-  // Precompute palette endpoints
   const cMin = {r:255,g:0,b:0};     // red
   const cMid = {r:255,g:255,b:0};   // yellow
   const cMax = {r:0,g:255,b:0};     // green
 
-  // Inverse-distance weighting
   const img = octx.createImageData(W, H);
   const data = img.data;
-  const K = Math.min(12, pts.length); // nearest neighbors
+  const K = Math.min(12, pts.length);
   const pPow = 2;
 
-  // Build a simple grid index for speed (optional). For now do linear scan then slice.
   for(let y=0;y<H;y++){
     for(let x=0;x<W;x++){
-      // Gather distances
       const tmp=[];
       for(const pt of pts){
         const dx=x-pt.x, dy=y-pt.y, d=Math.hypot(dx,dy);
@@ -458,7 +460,6 @@ function drawTopo(){
       }
       let v = sumW ? (sumV/sumW) : pts[0].v;
 
-      // Clamp and map color
       if(v<minV) v=minV; else if(v>maxV) v=maxV;
       let col;
       if(v<=midV){
@@ -488,6 +489,7 @@ function drawTopo(){
 
   // Ensure shown
   topoCanvas.style.display = 'block';
+  overlayImg.style.display = 'block';
 }
 
 function mix(a,b,t){
@@ -593,6 +595,7 @@ let auth=null, db=null;
         state.readings = [];
         clearDots();
         topoCanvas.style.display='none';
+        overlayImg.style.display='none';
         state.topoMode=false; modeIcon.src='topomap.png';
         txtArena.textContent='—'; txtPad.textContent='—'; txtEmp.textContent='—';
         doorEl.style.display='none'; drawRink(); return;
@@ -633,9 +636,30 @@ let auth=null, db=null;
           key: r.key, value: +r.value, u:+r.u, v:+r.v
         })) : [];
 
-        // Units + default range
+        // Unit heuristic for step granularity
         state.units = decideUnitsFromReadings(state.readings);
-        setDefaultRangeByUnits(state.units);
+        setInputStepsByUnits(state.units);
+
+        // Default range = dataset min/max
+        if(state.readings.length){
+          let vmin = Infinity, vmax = -Infinity;
+          for(const r of state.readings){
+            const v = +r.value;
+            if(Number.isFinite(v)){
+              if(v < vmin) vmin = v;
+              if(v > vmax) vmax = v;
+            }
+          }
+          if(Number.isFinite(vmin) && Number.isFinite(vmax) && vmin !== vmax){
+            rangeMinEl.value = vmin;
+            rangeMaxEl.value = vmax;
+          }else{
+            // Fallback if all same: widen slightly
+            const base = Number.isFinite(vmin)?vmin:0;
+            rangeMinEl.value = base - 1;
+            rangeMaxEl.value = base + 1;
+          }
+        }
 
         applyLayout(); // draws rink, dots/labels or topo if active
         if(state.topoMode) drawTopo();
